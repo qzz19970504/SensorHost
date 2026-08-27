@@ -202,6 +202,10 @@ class AppController(QObject):
     def _on_thread_finished(self) -> None:
         self._timer.stop()
         self._status_timer.stop()
+        if self._thread is None:
+            return
+        self._clear_session()
+        self.connection_changed.emit(False, "")
 
     def _clear_session(self) -> None:
         thread = self._thread
