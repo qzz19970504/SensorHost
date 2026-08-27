@@ -169,6 +169,8 @@ assert [frame.sequence for frame in frames] == [1, 2, 3, 4]
 
 ## 10. ESP32/PSRAM 参考流程
 
+完整的 ESP32 模块边界、状态机、PSRAM 所有权、故障恢复和验收要求见 [ESP32_GATEWAY_REQUIREMENTS.md](./ESP32_GATEWAY_REQUIREMENTS.md)。本节只提供协议级参考，若两者对线缆字节定义的描述不一致，以本文前 9 节为准。
+
 ESP32 应把 UART 字节视为透明 SDF1 流，先写 PSRAM 环形缓冲，再由网络/存储消费者释放空间。不要按 UART read 边界假设帧边界。
 
 ```text
@@ -192,4 +194,10 @@ loop:
         free_reported -= min(free_reported, n)
 ```
 
-credit 必须代表真实可写空间，不能按已接收字节盲目返还；断线重启后 STM32 credit 不会自动知道 ESP32 缓冲状态，应通过重新连接策略清空旧数据并重新发放有限窗口。
+credit 必须代表真实可写空间，不能按已接收字节盲目返还。
+
+### 10.1 当前 credit 会话限制
+
+当前 V1 只实现 `credit N` 的饱和累加，没有撤销或原子替换剩余 credit 的命令。若 ESP32 独立复位而 STM32 未复位，STM32 可能仍持有旧授权；ESP32 不能把新的空闲 PSRAM 直接再次全量授权，否则会重复计算空间。
+
+因此当前安全实验条件是 STM32 与 ESP32 同步复位。UART 生产验收前，控制面需要增加仅 UART 来源可用、在发送帧边界把剩余 credit 清零的 `credit reset` 或等价版本化能力。该命令尚未在当前固件实现，不能由 ESP32 用延时或本地清空伪装。
