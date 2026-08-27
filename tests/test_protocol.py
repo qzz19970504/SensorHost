@@ -255,26 +255,17 @@ def test_iis_sensor_timestamp_wrap_stays_on_mcu_timeline() -> None:
     after_wrap = bytes([4 << 3]) + struct.pack("<I", 0x00000010) + b"\x00\x00"
     parser = StreamParser()
 
-    first = parser.feed(
+    frame = parser.feed(
         encode_frame(
             MessageType.IIS3DWB_FIFO,
             1,
-            before_wrap + accel_word,
-            timestamp_us=2_000_000,
-            item_count=2,
-        )
-    )[0]
-    second = parser.feed(
-        encode_frame(
-            MessageType.IIS3DWB_FIFO,
-            2,
-            after_wrap + accel_word,
+            before_wrap + accel_word + after_wrap + accel_word,
             timestamp_us=2_000_800,
-            item_count=2,
+            item_count=4,
         )
     )[0]
 
-    assert first.iis_samples is not None
-    assert second.iis_samples is not None
-    assert first.iis_samples[0].timestamp_us == pytest.approx(2_000_000.0)
-    assert second.iis_samples[0].timestamp_us == pytest.approx(2_000_800.0)
+    assert frame.iis_samples is not None
+    assert [sample.timestamp_us for sample in frame.iis_samples] == pytest.approx(
+        [2_000_000.0, 2_000_800.0]
+    )
