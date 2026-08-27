@@ -3,10 +3,14 @@ from __future__ import annotations
 import json
 import random
 import struct
+import sys
 import zlib
 from pathlib import Path
 
 import pytest
+
+HOST_SOURCE = Path(__file__).resolve().parents[1] / "host" / "src"
+sys.path.insert(0, str(HOST_SOURCE))
 
 from protocol import (
     HEADER_SIZE,
