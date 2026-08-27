@@ -17,6 +17,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from sensor_host.presentation.vibration_view import VibrationView
+
 
 _DEFAULT_WINDOW_WIDTH = 1440
 _DEFAULT_WINDOW_HEIGHT = 900
@@ -173,10 +175,8 @@ class MainWindow(QMainWindow):
         vibration_card, self.vibration_container_layout = _card(
             "3-AXIS VIBRATION · g"
         )
-        vibration_placeholder = QLabel("WAITING FOR IIS3DWB DATA")
-        vibration_placeholder.setProperty("role", "muted")
-        vibration_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.vibration_container_layout.addWidget(vibration_placeholder, stretch=1)
+        self.vibration_view = VibrationView()
+        self.vibration_container_layout.addWidget(self.vibration_view, stretch=1)
         main_splitter.addWidget(vibration_card)
 
         right_splitter = QSplitter()

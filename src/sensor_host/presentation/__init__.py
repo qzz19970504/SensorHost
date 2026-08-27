@@ -2,5 +2,6 @@
 
 from .main_window import MainWindow
 from .theme import COLORS, dark_stylesheet
+from .vibration_view import VibrationView
 
-__all__ = ["COLORS", "MainWindow", "dark_stylesheet"]
+__all__ = ["COLORS", "MainWindow", "VibrationView", "dark_stylesheet"]
