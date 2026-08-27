@@ -318,7 +318,27 @@ Keep firmware-side tests compatible through a re-export:
 # test/protocol.py
 """Compatibility import for the installable host SDF1 protocol package."""
 
-from sensor_host.protocol.sdf1 import *  # noqa: F403
+from sensor_host.protocol.sdf1 import (
+    CRC_SIZE,
+    HEADER_SIZE,
+    IIS_SAMPLE_PERIOD_US,
+    IIS_TIMESTAMP_TICK_US,
+    IIS_WORD_SIZE,
+    MAGIC,
+    MAX_HEADER_SIZE,
+    MAX_PAYLOAD_SIZE,
+    VERSION,
+    Frame,
+    IisFifoWord,
+    IisSample,
+    IisTimestampReconstructor,
+    Jy61plSample,
+    MessageType,
+    ParserStats,
+    StatusV1,
+    StreamParser,
+    decode_iis_words,
+)
 ```
 
 Add the package source path at the top of `test/test_protocol.py` before importing `protocol`, so root firmware tests run without requiring installation:
@@ -1461,9 +1481,9 @@ Run from the feature worktree:
 $env:QT_QPA_PLATFORM='offscreen'
 & .\host\.venv\Scripts\python.exe -m pytest .\host\tests .\test\test_protocol.py -q
 & .\host\.venv\Scripts\python.exe -m compileall -q .\host\src
-cmake --build --preset Debug
-cmake --build --preset Release
-ctest --test-dir .\build\Debug --output-on-failure
+.\tools\build_cached.ps1 -Configuration Debug
+.\tools\build_cached.ps1 -Configuration Release
+.\build\host\stream_host_tests.exe
 git diff --check
 git status --short --branch
 ```
