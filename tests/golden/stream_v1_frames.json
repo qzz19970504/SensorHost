@@ -1,0 +1,54 @@
+{
+  "protocol": "SDF1",
+  "version": 1,
+  "frames": [
+    {
+      "name": "iis3dwb_fifo",
+      "offset": 0,
+      "length": 46,
+      "message_type": 1,
+      "flags": 1,
+      "sequence": 1,
+      "timestamp_us": 1000000,
+      "item_count": 2,
+      "payload_hex": "000102030405060708090a0b0c0d",
+      "crc32": 4161595075
+    },
+    {
+      "name": "jy61pl_sample",
+      "offset": 46,
+      "length": 46,
+      "message_type": 2,
+      "flags": 0,
+      "sequence": 2,
+      "timestamp_us": 1000100,
+      "item_count": 1,
+      "payload_hex": "3412feff0080ff7f000001000180",
+      "crc32": 3585562361
+    },
+    {
+      "name": "status",
+      "offset": 92,
+      "length": 96,
+      "message_type": 3,
+      "flags": 2,
+      "sequence": 3,
+      "timestamp_us": 1000200,
+      "item_count": 1,
+      "payload_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+      "crc32": 3149268224
+    },
+    {
+      "name": "cli_response",
+      "offset": 188,
+      "length": 47,
+      "message_type": 4,
+      "flags": 0,
+      "sequence": 4,
+      "timestamp_us": 1000300,
+      "item_count": 1,
+      "payload_hex": "7472616e73706f72743d6364630d0a",
+      "crc32": 4065152228
+    }
+  ]
+}
