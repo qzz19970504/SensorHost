@@ -5,7 +5,7 @@ from .orientation_view import AttitudeView, OrientationView
 from .app_controller import AppController
 from .console_view import ConsoleView
 from .diagnostics_view import DiagnosticsView
-from .theme import COLORS, dark_stylesheet
+from .theme import COLORS, dark_stylesheet, load_application_fonts
 from .vibration_view import VibrationView
 
 __all__ = [
@@ -18,4 +18,5 @@ __all__ = [
     "OrientationView",
     "VibrationView",
     "dark_stylesheet",
+    "load_application_fonts",
 ]

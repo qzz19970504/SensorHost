@@ -1,4 +1,8 @@
-"""Design tokens and Qt stylesheet for the sensor dashboard."""
+"""Design tokens, fonts and Qt stylesheet for the sensor dashboard."""
+
+from pathlib import Path
+
+from PyQt6.QtGui import QFontDatabase
 
 COLORS = {
     "background": "#0D1725",
@@ -13,6 +17,21 @@ COLORS = {
     "amber": "#F0B23D",
     "blue": "#56A7FF",
 }
+
+
+def load_application_fonts() -> list[str]:
+    """Register the Windows fonts required by isolated/offscreen Qt runtimes."""
+    loaded_families: list[str] = []
+    for font_path in (
+        Path("C:/Windows/Fonts/segoeui.ttf"),
+        Path("C:/Windows/Fonts/consola.ttf"),
+    ):
+        if not font_path.exists():
+            continue
+        font_id = QFontDatabase.addApplicationFont(str(font_path))
+        if font_id >= 0:
+            loaded_families.extend(QFontDatabase.applicationFontFamilies(font_id))
+    return loaded_families
 
 
 def dark_stylesheet() -> str:

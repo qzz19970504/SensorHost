@@ -1,0 +1,7 @@
+{
+  "window": [1920, 1080],
+  "theme": "dark",
+  "screen": "live-monitor",
+  "baseline": "dark-live-monitor.png",
+  "review": "manual pixel review; geometry assertions remain automated"
+}

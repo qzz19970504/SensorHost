@@ -6,7 +6,12 @@ import sys
 
 from PyQt6.QtWidgets import QApplication
 
-from sensor_host.presentation import AppController, MainWindow, dark_stylesheet
+from sensor_host.presentation import (
+    AppController,
+    MainWindow,
+    dark_stylesheet,
+    load_application_fonts,
+)
 from sensor_host.transport import CdcSerialTransport
 
 
@@ -14,6 +19,7 @@ def main() -> int:
     """Create, show, and run the sensor host application."""
     application = QApplication(sys.argv)
     application.setApplicationName("STM32 Sensor Host")
+    load_application_fonts()
     application.setStyleSheet(dark_stylesheet())
     window = MainWindow()
     controller = AppController(CdcSerialTransport)
