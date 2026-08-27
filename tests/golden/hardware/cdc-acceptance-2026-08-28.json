@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "date": "2026-08-28",
+  "result": "pass",
+  "firmware": {
+    "configuration": "Debug",
+    "transport_small_buffer_count": 8,
+    "active_transport": "CDC"
+  },
+  "five_minute_smoke": {
+    "duration_s": 300.0,
+    "bytes_received": 58586268,
+    "frames": 34934,
+    "jy61pl_frames": 367,
+    "crc_errors": 0,
+    "sequence_gaps": 0,
+    "source_drop_delta": 0,
+    "transport_drop_delta": 0,
+    "fifo_overrun_delta": 0,
+    "recording_replay_match": true
+  },
+  "thirty_minute_gate": {
+    "duration_s": 1800.0,
+    "bytes_received": 351434630,
+    "frames": 207863,
+    "jy61pl_frames": 2208,
+    "crc_errors": 0,
+    "sequence_gaps": 0,
+    "source_drop_delta": 0,
+    "transport_drop_delta": 0,
+    "fifo_overrun_delta": 0,
+    "recorder_bytes": 351434630,
+    "replay_frames": 207863,
+    "replay_crc_errors": 0,
+    "replay_sequence_gaps": 0
+  },
+  "control_regression": {
+    "acquisition_stop_start": "pass",
+    "watermarks_tested": [128, 511, 256],
+    "final_acquisition_state": 1,
+    "final_watermark_words": 256
+  },
+  "ui_regression": {
+    "window_size": "1440x900",
+    "live_xyz": "pass",
+    "opengl_orientation": "pass",
+    "numeric_attitude": "pass",
+    "health_metrics": "pass",
+    "disconnect": "pass"
+  },
+  "notes": [
+    "Acceptance uses counter deltas; historical saturated-run totals may be non-zero.",
+    "UART and ESP32 hardware paths remain outside this CDC-only gate."
+  ]
+}

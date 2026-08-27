@@ -8,7 +8,7 @@
 
 **Approved:** 2026-08-27
 
-**Implementation:** Implemented; CDC hardware acceptance pending
+**Implementation:** Implemented; CDC hardware acceptance passed 2026-08-28
 
 ## 1. Context
 
@@ -278,7 +278,7 @@ store 保存有界时间窗和最新状态。`snapshot()` 返回不可变或复�
 
 ## 12. Acceptance Criteria
 
-- [ ] Windows 上可发现并连接 STM32 CDC。
+- [x] Windows 上可发现并连接 STM32 CDC。
 - [x] 2 MB 软件回放快于对应实时流量，解析指标与参考 Python 实现一致。
 - [x] XYZ 振动曲线使用重建时间，单位和颜色清晰。
 - [x] 姿态矩阵按 roll/pitch/yaw 旋转，并显示加速度向量和 stale 状态。
@@ -287,7 +287,7 @@ store 保存有界时间窗和最新状态。`snapshot()` 返回不可变或复�
 - [x] 原始 `.sdf1` 录制可回放，CRC/sequence 指标可复现。
 - [x] 缓存、CLI 历史和写盘队列有界，采集线程可自然停止。
 - [x] 无 OpenGL 时除 3D 外的采集、录制和诊断仍可使用。
-- [ ] CDC 实板持续测试通过后才把当前 CDC 上位机阶段标为完成。
+- [x] CDC 实板 5 分钟 smoke 和 30 分钟持续测试通过；录制/回放一致且完整性错误增量为 0。
 
 ## 13. Open Questions
 
@@ -310,3 +310,4 @@ store 保存有界时间窗和最新状态。`snapshot()` 返回不可变或复�
 |---|---|---|
 | 2026-08-27 | Codex | 记录已批准的功能、PyQt 技术方案和双焦点 UI 设计 |
 | 2026-08-28 | Codex | 标记自动化验收项，明确 CSV 延期和 CDC 硬件门禁 |
+| 2026-08-28 | Codex | 记录 CDC 实板长稳、控制回归与 UI 可读性验收通过 |

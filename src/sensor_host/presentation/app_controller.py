@@ -15,6 +15,7 @@ from sensor_host.transport import Transport
 
 
 _SNAPSHOT_INTERVAL_MS = 33
+_STATUS_INTERVAL_MS = 5_000
 _THREAD_STOP_TIMEOUT_MS = 3_000
 
 
@@ -64,6 +65,9 @@ class AppController(QObject):
         self._timer = QTimer(self)
         self._timer.setInterval(_SNAPSHOT_INTERVAL_MS)
         self._timer.timeout.connect(self._publish_snapshot)
+        self._status_timer = QTimer(self)
+        self._status_timer.setInterval(_STATUS_INTERVAL_MS)
+        self._status_timer.timeout.connect(self._request_status)
 
     @property
     def is_running(self) -> bool:
@@ -83,6 +87,7 @@ class AppController(QObject):
             return
         self._store = RealtimeSampleStore()
         self._acquisition = AcquisitionController(transport, self._store)
+        self._acquisition.request_status()
         self._stop_event = threading.Event()
         self._thread = QThread(self)
         self._worker = AcquisitionWorker(self._acquisition, self._stop_event)
@@ -96,6 +101,7 @@ class AppController(QObject):
         self._thread.finished.connect(self._on_thread_finished)
         self._thread.start()
         self._timer.start()
+        self._status_timer.start()
         self.connection_changed.emit(True, device_id)
 
     @pyqtSlot()
@@ -105,6 +111,7 @@ class AppController(QObject):
         if thread is None:
             return
         self._timer.stop()
+        self._status_timer.stop()
         if stop_event is not None:
             stop_event.set()
         thread.quit()
@@ -182,6 +189,11 @@ class AppController(QObject):
         if not self._display_paused:
             self.snapshot_ready.emit(store.snapshot(self._window_s, max_points=5_000))
 
+    @pyqtSlot()
+    def _request_status(self) -> None:
+        if self._acquisition is not None:
+            self._acquisition.request_status()
+
     @pyqtSlot(str)
     def _on_worker_failed(self, message: str) -> None:
         self.error_raised.emit(message)
@@ -189,6 +201,7 @@ class AppController(QObject):
     @pyqtSlot()
     def _on_thread_finished(self) -> None:
         self._timer.stop()
+        self._status_timer.stop()
 
     def _clear_session(self) -> None:
         thread = self._thread
@@ -208,4 +221,3 @@ class AppController(QObject):
     def _default_recording_path() -> Path:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         return Path("host") / "recordings" / f"session-{stamp}.sdf1"
-

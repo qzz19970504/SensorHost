@@ -1362,7 +1362,7 @@ git commit -m "docs: add sensor host operating guide"
 - Modify after passing: `docs/ROADMAP.md`
 - Modify after passing: `docs/plans/2026-08-27-sensor-host-application-design.md`
 
-- [ ] **Step 1: Write a failing acceptance-report test**
+- [x] **Step 1: Write a failing acceptance-report test**
 
 ```python
 # host/tests/test_cdc_acceptance.py
@@ -1394,7 +1394,7 @@ def with_updates(self, **changes) -> "AcceptanceReport":
     return dataclasses.replace(self, **changes)
 ```
 
-- [ ] **Step 2: Implement the timed CDC runner**
+- [x] **Step 2: Implement the timed CDC runner**
 
 `cdc_acceptance.py` arguments:
 
@@ -1420,7 +1420,7 @@ The runner must:
 
 Do not treat JY61PL absence as a stream-integrity failure; report its frame count separately because module wiring may vary.
 
-- [ ] **Step 3: Run the complete offline gate**
+- [x] **Step 3: Run the complete offline gate**
 
 Run:
 
@@ -1433,7 +1433,7 @@ git diff --check
 
 Expected: all tests pass, compileall exits zero, and the diff check is empty.
 
-- [ ] **Step 4: Run a five-minute CDC smoke acceptance**
+- [x] **Step 4: Run a five-minute CDC smoke acceptance**
 
 Discover the STM32 CDC COM port with `python -m serial.tools.list_ports -v`, then run:
 
@@ -1443,7 +1443,7 @@ Discover the STM32 CDC COM port with `python -m serial.tools.list_ports -v`, the
 
 Expected: exit code 0, CRC errors 0, sequence gaps 0, source/transport/fifo deltas 0, and replay frame count equal to live frame count.
 
-- [ ] **Step 5: Launch and visually verify the real application**
+- [x] **Step 5: Launch and visually verify the real application**
 
 Run: `& .\host\.venv\Scripts\stm32-sensor-host.exe`
 
@@ -1456,13 +1456,13 @@ Verify:
 - `status`, stop/start and watermark controls return valid responses.
 - Disconnecting USB ends the session cleanly and does not leave a running thread.
 
-- [ ] **Step 6: Run the 30-minute merge-gate acceptance**
+- [x] **Step 6: Run the 30-minute merge-gate acceptance**
 
 Run the same command with `--duration 1800`. Do not shorten this gate after a five-minute smoke pass.
 
 Expected: the generated JSON report has `passed: true` and contains the recording path, firmware status deltas and replay comparison.
 
-- [ ] **Step 7: Update completion evidence and commit**
+- [x] **Step 7: Update completion evidence and commit**
 
 Only after the report passes, check the CDC hardware acceptance items in the design document and update `docs/ROADMAP.md` with the date, duration and report summary. Do not commit large `.sdf1` recordings; commit only a small redacted JSON summary if it contains no machine-specific path.
 
