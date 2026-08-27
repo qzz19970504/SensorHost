@@ -1,0 +1,187 @@
+from __future__ import annotations
+
+import json
+import random
+import struct
+import zlib
+from pathlib import Path
+
+import pytest
+
+from protocol import (
+    HEADER_SIZE,
+    MAX_PAYLOAD_SIZE,
+    MessageType,
+    StreamParser,
+)
+
+
+ROOT = Path(__file__).resolve().parent
+
+
+def encode_frame(
+    message_type: int,
+    sequence: int,
+    payload: bytes,
+    *,
+    flags: int = 0,
+    timestamp_us: int = 123,
+    item_count: int = 1,
+    version: int = 1,
+    header_size: int = HEADER_SIZE,
+    payload_size: int | None = None,
+) -> bytes:
+    declared_size = len(payload) if payload_size is None else payload_size
+    header = struct.pack(
+        "<4sBBHHHIQHH",
+        b"SDF1",
+        version,
+        message_type,
+        flags,
+        header_size,
+        declared_size,
+        sequence,
+        timestamp_us,
+        item_count,
+        0,
+    )
+    body = header + payload
+    return body + struct.pack("<I", zlib.crc32(body) & 0xFFFFFFFF)
+
+
+@pytest.fixture(scope="module")
+def golden() -> tuple[bytes, list[dict[str, object]]]:
+    data = (ROOT / "golden" / "stream_v1_frames.bin").read_bytes()
+    manifest = json.loads(
+        (ROOT / "golden" / "stream_v1_frames.json").read_text(encoding="utf-8")
+    )
+    return data, manifest["frames"]
+
+
+@pytest.mark.parametrize("chunk_size", [1, 2, 7, 31, 4096])
+def test_parses_golden_with_fixed_chunks(golden, chunk_size: int) -> None:
+    data, manifest = golden
+    parser = StreamParser()
+    frames = []
+    for offset in range(0, len(data), chunk_size):
+        frames.extend(parser.feed(data[offset : offset + chunk_size]))
+
+    assert [frame.message_type for frame in frames] == [
+        MessageType(case["message_type"]) for case in manifest
+    ]
+    assert [frame.sequence for frame in frames] == [1, 2, 3, 4]
+    assert parser.stats.frames == 4
+    assert parser.stats.sequence_gaps == 0
+
+
+def test_random_chunks_and_concatenated_frames(golden) -> None:
+    data, _ = golden
+    parser = StreamParser()
+    randomizer = random.Random(20260827)
+    frames = []
+    offset = 0
+    while offset < len(data):
+        size = randomizer.randint(1, 19)
+        frames.extend(parser.feed(data[offset : offset + size]))
+        offset += size
+    assert len(frames) == 4
+    assert frames[-1].cli_text == "transport=cdc\r\n"
+
+
+def test_recovers_from_garbage_and_bad_crc(golden) -> None:
+    data, manifest = golden
+    first_length = int(manifest[0]["length"])
+    second_length = int(manifest[1]["length"])
+    damaged = bytearray(data[:first_length])
+    damaged[-1] ^= 0xFF
+    second = data[first_length : first_length + second_length]
+    parser = StreamParser()
+
+    frames = parser.feed(b"garbage-prefix" + bytes(damaged) + second)
+
+    assert [frame.message_type for frame in frames] == [MessageType.JY61PL_SAMPLE]
+    assert parser.stats.crc_errors == 1
+    assert parser.stats.bytes_discarded >= len(b"garbage-prefix")
+
+
+def test_rejects_bad_header_oversize_and_unknown_type(golden) -> None:
+    data, manifest = golden
+    first = data[: int(manifest[0]["length"])]
+    bad_header = encode_frame(MessageType.CLI_RESPONSE, 5, b"x", header_size=27)
+    oversized = encode_frame(
+        MessageType.CLI_RESPONSE,
+        6,
+        b"",
+        payload_size=MAX_PAYLOAD_SIZE + 1,
+    )
+    unknown = encode_frame(0x7F, 7, b"future")
+    parser = StreamParser()
+
+    frames = parser.feed(bad_header + oversized + unknown + first)
+
+    assert [frame.message_type for frame in frames] == [MessageType.IIS3DWB_FIFO]
+    assert parser.stats.header_errors == 1
+    assert parser.stats.length_errors == 1
+    assert parser.stats.unknown_types == 1
+
+
+def test_counts_sequence_gap() -> None:
+    parser = StreamParser()
+    stream = (
+        encode_frame(MessageType.CLI_RESPONSE, 10, b"a")
+        + encode_frame(MessageType.CLI_RESPONSE, 13, b"b")
+    )
+    assert len(parser.feed(stream)) == 2
+    assert parser.stats.sequence_gaps == 2
+
+
+def test_decodes_jy61pl_scaling_and_status() -> None:
+    jy_payload = struct.pack("<7h", 16384, -16384, 0, 2534, 16384, -16384, 0)
+    status_payload = bytearray(64)
+    struct.pack_into("<BBBBHH9I5H2xQ", status_payload, 0,
+                     1, 1, 2, 1, 256, 3,
+                     4096, 3, 4, 5, 6, 7, 8, 9, 10,
+                     111, 222, 333, 444, 555, 987654321)
+    parser = StreamParser()
+    frames = parser.feed(
+        encode_frame(MessageType.JY61PL_SAMPLE, 1, jy_payload)
+        + encode_frame(MessageType.STATUS, 2, bytes(status_payload))
+    )
+
+    jy = frames[0].jy61pl
+    assert jy is not None
+    assert jy.raw == (16384, -16384, 0, 2534, 16384, -16384, 0)
+    assert jy.acceleration_g == pytest.approx((8.0, -8.0, 0.0))
+    assert jy.temperature_c == pytest.approx(25.34)
+    assert jy.angles_deg == pytest.approx((90.0, -90.0, 0.0))
+    status = frames[1].status
+    assert status is not None
+    assert status.watermark_words == 256
+    assert status.uart_credit_bytes == 4096
+    assert status.iis_stack_high_water_words == 111
+    assert status.uptime_us == 987654321
+
+
+def test_decodes_iis_tags_and_sensor_timestamps() -> None:
+    timestamp_word = bytes([4 << 3]) + struct.pack("<I", 1000) + b"\x00\x00"
+    accel_word = bytes([2 << 3]) + struct.pack("<hhh", 100, -200, 300)
+    parser = StreamParser()
+    frame = parser.feed(
+        encode_frame(
+            MessageType.IIS3DWB_FIFO,
+            1,
+            timestamp_word + accel_word,
+            flags=0x0002,
+            timestamp_us=999999,
+            item_count=2,
+        )
+    )[0]
+
+    assert frame.iis_words is not None
+    assert frame.iis_words[0].sensor_tag == 4
+    assert frame.iis_words[0].timestamp_ticks == 1000
+    assert frame.iis_words[1].sensor_tag == 2
+    assert frame.iis_words[1].acceleration_raw == (100, -200, 300)
+    assert frame.iis_samples is not None
+    assert frame.iis_samples[0].timestamp_us == pytest.approx(25000.0)
+    assert frame.iis_samples[0].acceleration_raw == (100, -200, 300)
