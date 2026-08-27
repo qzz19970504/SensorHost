@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stm32-sensor-host"
+version = "0.1.0"
+description = "PyQt SDF1 acquisition host for STM32F407 sensor firmware"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=1.26,<3",
+  "pyserial>=3.5,<4",
+  "PyQt6>=6.7,<7",
+  "pyqtgraph>=0.13.7,<0.15",
+  "PyOpenGL>=3.1.7,<4",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8,<10",
+  "pytest-qt>=4.4,<5",
+]
+
+[project.scripts]
+stm32-sensor-host = "sensor_host.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
