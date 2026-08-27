@@ -1,6 +1,13 @@
 """Public acquisition state and storage interfaces."""
 
-from .models import UiSnapshot
+from .controller import AcquisitionController
+from .models import AcquisitionHealth, ConnectionState, UiSnapshot
 from .sample_store import RealtimeSampleStore
 
-__all__ = ["RealtimeSampleStore", "UiSnapshot"]
+__all__ = [
+    "AcquisitionController",
+    "AcquisitionHealth",
+    "ConnectionState",
+    "RealtimeSampleStore",
+    "UiSnapshot",
+]

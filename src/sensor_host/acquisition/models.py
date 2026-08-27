@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 
 import numpy as np
 from numpy.typing import NDArray
@@ -23,3 +24,23 @@ class UiSnapshot:
     firmware_status: StatusV1 | None
     parser_stats: ParserStats
     sample_rate_hz: float
+
+
+@dataclass(frozen=True)
+class AcquisitionHealth:
+    """Summarize host-side ingest and recording health."""
+
+    bytes_received: int = 0
+    frames_received: int = 0
+    recording_failure: str | None = None
+    last_error: str | None = None
+
+
+class ConnectionState(str, Enum):
+    """Represent the externally visible acquisition lifecycle."""
+
+    DISCONNECTED = "disconnected"
+    CONNECTING = "connecting"
+    STREAMING = "streaming"
+    RECONNECTING = "reconnecting"
+    STOPPING = "stopping"
