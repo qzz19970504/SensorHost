@@ -2,6 +2,7 @@ import numpy as np
 
 from sensor_host.acquisition import UiSnapshot
 from sensor_host.presentation.main_window import MainWindow
+from sensor_host.presentation.console_view import ConsoleView
 from sensor_host.presentation.orientation_view import OrientationView
 from sensor_host.presentation.vibration_view import VibrationView
 from sensor_host.protocol import ParserStats
@@ -78,3 +79,17 @@ def test_orientation_view_can_force_fallback(qtbot) -> None:
 
     assert view.using_opengl is False
     assert "2D" in view.mode_label.text()
+
+
+def test_console_bounds_transcript_and_emits_trimmed_command(qtbot) -> None:
+    console = ConsoleView(max_blocks=100)
+    qtbot.addWidget(console)
+
+    with qtbot.waitSignal(console.command_submitted) as signal:
+        console.command_input.setText(" status ")
+        console.send_button.click()
+
+    assert signal.args == ["status"]
+    for index in range(150):
+        console.append_local(f"line {index}")
+    assert console.transcript.document().blockCount() <= 100

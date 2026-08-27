@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import queue
-from threading import Event
+from threading import Event, Lock
 
 from sensor_host.acquisition.models import AcquisitionHealth
 from sensor_host.acquisition.sample_store import RealtimeSampleStore
@@ -29,8 +29,10 @@ class AcquisitionController:
         self._transport = transport
         self._store = store
         self._recorder = recorder
+        self._recorder_lock = Lock()
         self._parser = StreamParser()
         self._commands: queue.Queue[bytes] = queue.Queue()
+        self._cli_responses: queue.Queue[str] = queue.Queue()
         self._bytes_received = 0
         self._frames_received = 0
         self._last_error: str | None = None
@@ -39,8 +41,9 @@ class AcquisitionController:
     def health(self) -> AcquisitionHealth:
         """Return an immutable host-side health snapshot."""
         recording_failure = None
-        if self._recorder is not None:
-            recording_failure = self._recorder.failure
+        with self._recorder_lock:
+            if self._recorder is not None:
+                recording_failure = self._recorder.failure
         return AcquisitionHealth(
             bytes_received=self._bytes_received,
             frames_received=self._frames_received,
@@ -80,6 +83,20 @@ class AcquisitionController:
         """Queue a firmware status request."""
         self.enqueue_command("status")
 
+    def set_recorder(self, recorder: RawSessionRecorder | None) -> None:
+        """Attach or detach an already-started recorder at a chunk boundary."""
+        with self._recorder_lock:
+            self._recorder = recorder
+
+    def drain_cli_responses(self) -> list[str]:
+        """Return pending decoded CLI response frames without blocking."""
+        responses: list[str] = []
+        while True:
+            try:
+                responses.append(self._cli_responses.get_nowait())
+            except queue.Empty:
+                return responses
+
     def run(self, stop_event: Event, idle_limit: int | None = None) -> None:
         """Read until stopped, or until a test-only finite idle limit is met."""
         if idle_limit is not None and idle_limit <= 0:
@@ -100,8 +117,9 @@ class AcquisitionController:
 
                 empty_read_count = 0
                 self._bytes_received += len(chunk)
-                if self._recorder is not None:
-                    self._recorder.submit(chunk)
+                with self._recorder_lock:
+                    if self._recorder is not None:
+                        self._recorder.submit(chunk)
                 frames = self._parser.feed(chunk)
                 self._frames_received += len(frames)
                 for frame in frames:
@@ -109,8 +127,11 @@ class AcquisitionController:
                 self._store.update_parser_stats(self._parser.stats)
         finally:
             self._transport.close()
-            if self._recorder is not None:
-                self._recorder.stop()
+            with self._recorder_lock:
+                recorder = self._recorder
+                self._recorder = None
+            if recorder is not None:
+                recorder.stop()
 
     def _send_pending_commands(self) -> None:
         while True:
@@ -130,3 +151,6 @@ class AcquisitionController:
             return
         if frame.message_type is MessageType.STATUS and frame.status is not None:
             self._store.update_status(frame.status)
+            return
+        if frame.message_type is MessageType.CLI_RESPONSE and frame.cli_text is not None:
+            self._cli_responses.put_nowait(frame.cli_text)

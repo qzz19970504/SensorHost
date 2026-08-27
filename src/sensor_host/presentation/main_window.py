@@ -19,6 +19,9 @@ from PyQt6.QtWidgets import (
 
 from sensor_host.presentation.vibration_view import VibrationView
 from sensor_host.presentation.orientation_view import AttitudeView, OrientationView
+from sensor_host.presentation.console_view import ConsoleView
+from sensor_host.presentation.diagnostics_view import DiagnosticsView
+from sensor_host.acquisition import AcquisitionHealth, UiSnapshot
 
 
 _DEFAULT_WINDOW_WIDTH = 1440
@@ -47,6 +50,7 @@ class MainWindow(QMainWindow):
     pause_toggled = pyqtSignal(bool)
     record_toggled = pyqtSignal(bool)
     watermark_requested = pyqtSignal(int)
+    refresh_requested = pyqtSignal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -64,8 +68,10 @@ class MainWindow(QMainWindow):
         root_layout.addWidget(self._create_acquisition_toolbar())
         self.tabs = QTabWidget()
         self.live_tab = self._create_live_tab()
-        self.diagnostics_tab = self._create_placeholder_tab("DIAGNOSTICS")
-        self.console_tab = self._create_placeholder_tab("CONSOLE")
+        self.diagnostics_view = DiagnosticsView()
+        self.diagnostics_tab = self._wrap_tab(self.diagnostics_view)
+        self.console_view = ConsoleView()
+        self.console_tab = self._wrap_tab(self.console_view)
         self.tabs.addTab(self.live_tab, "LIVE MONITOR")
         self.tabs.addTab(self.diagnostics_tab, "DIAGNOSTICS")
         self.tabs.addTab(self.console_tab, "CONSOLE")
@@ -111,6 +117,30 @@ class MainWindow(QMainWindow):
         if selected_index >= 0:
             self.device_combo.setCurrentIndex(selected_index)
 
+    def update_snapshot(self, snapshot: UiSnapshot) -> None:
+        """Refresh all live views and the fixed stream-integrity summary."""
+        self.vibration_view.update_snapshot(snapshot)
+        self.orientation_view.update_snapshot(snapshot)
+        self.attitude_view.update_snapshot(snapshot)
+        self.diagnostics_view.update_snapshot(snapshot)
+        status = snapshot.firmware_status
+        source_drops = 0 if status is None else status.source_drops
+        transport_drops = 0 if status is None else status.transport_drops
+        cdc_errors = 0 if status is None else status.cdc_errors
+        uptime = "—" if status is None else f"{status.uptime_us / 1_000_000.0:.1f}s"
+        self.health_summary.setText(
+            f"SAMPLES/S {snapshot.sample_rate_hz:,.0f}     "
+            f"CRC ERR {snapshot.parser_stats.crc_errors}     "
+            f"SEQ GAP {snapshot.parser_stats.sequence_gaps}     "
+            f"SOURCE DROP {source_drops}     "
+            f"TRANSPORT DROP {transport_drops}     "
+            f"CDC ERR {cdc_errors}     UPTIME {uptime}"
+        )
+
+    def update_health(self, health: AcquisitionHealth) -> None:
+        """Forward host-side counters to the diagnostics page."""
+        self.diagnostics_view.update_health(health)
+
     def _create_header(self) -> QFrame:
         header = QFrame()
         layout = QHBoxLayout(header)
@@ -125,6 +155,9 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.device_combo)
         self.connect_button = QPushButton("CONNECT")
         layout.addWidget(self.connect_button)
+        self.refresh_button = QPushButton("REFRESH")
+        self.refresh_button.clicked.connect(self.refresh_requested)
+        layout.addWidget(self.refresh_button)
         self.connection_badge = QLabel("DISCONNECTED")
         self.connection_badge.setMinimumWidth(110)
         layout.addWidget(self.connection_badge)
@@ -224,6 +257,14 @@ class MainWindow(QMainWindow):
         placeholder.setProperty("role", "muted")
         card_layout.addWidget(placeholder, stretch=1)
         layout.addWidget(card)
+        return tab
+
+    @staticmethod
+    def _wrap_tab(view: QWidget) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(0, 10, 0, 0)
+        layout.addWidget(view)
         return tab
 
     def _emit_connect_requested(self) -> None:
