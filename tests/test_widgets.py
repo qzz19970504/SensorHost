@@ -2,6 +2,7 @@ import numpy as np
 
 from sensor_host.acquisition import UiSnapshot
 from sensor_host.presentation.main_window import MainWindow
+from sensor_host.presentation.orientation_view import OrientationView
 from sensor_host.presentation.vibration_view import VibrationView
 from sensor_host.protocol import ParserStats
 
@@ -69,3 +70,11 @@ def test_vibration_pause_freezes_display_data(qtbot) -> None:
 
     assert view.x_curve.getData()[1].tolist() == [1.0, 2.0]
     assert view.paused_badge.text() == "DISPLAY PAUSED"
+
+
+def test_orientation_view_can_force_fallback(qtbot) -> None:
+    view = OrientationView(force_fallback=True)
+    qtbot.addWidget(view)
+
+    assert view.using_opengl is False
+    assert "2D" in view.mode_label.text()

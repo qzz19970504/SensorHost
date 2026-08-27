@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
 )
 
 from sensor_host.presentation.vibration_view import VibrationView
+from sensor_host.presentation.orientation_view import AttitudeView, OrientationView
 
 
 _DEFAULT_WINDOW_WIDTH = 1440
@@ -184,19 +185,13 @@ class MainWindow(QMainWindow):
         orientation_card, self.orientation_container_layout = _card(
             "JY61PL ORIENTATION"
         )
-        orientation_placeholder = QLabel("WAITING FOR JY61PL DATA")
-        orientation_placeholder.setProperty("role", "muted")
-        orientation_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.orientation_container_layout.addWidget(
-            orientation_placeholder,
-            stretch=1,
-        )
+        self.orientation_view = OrientationView()
+        self.orientation_container_layout.addWidget(self.orientation_view, stretch=1)
         attitude_card, self.attitude_container_layout = _card(
             "ATTITUDE & ACCELERATION"
         )
-        attitude_placeholder = QLabel("ROLL  —    PITCH  —    YAW  —")
-        attitude_placeholder.setProperty("role", "muted")
-        self.attitude_container_layout.addWidget(attitude_placeholder, stretch=1)
+        self.attitude_view = AttitudeView()
+        self.attitude_container_layout.addWidget(self.attitude_view, stretch=1)
         right_splitter.addWidget(orientation_card)
         right_splitter.addWidget(attitude_card)
         right_splitter.setStretchFactor(0, 3)
