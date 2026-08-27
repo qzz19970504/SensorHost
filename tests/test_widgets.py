@@ -3,7 +3,7 @@ import numpy as np
 from sensor_host.acquisition import UiSnapshot
 from sensor_host.presentation.main_window import MainWindow
 from sensor_host.presentation.console_view import ConsoleView
-from sensor_host.presentation.orientation_view import OrientationView
+from sensor_host.presentation.orientation_view import AttitudeView, OrientationView
 from sensor_host.presentation.vibration_view import VibrationView
 from sensor_host.protocol import ParserStats
 
@@ -38,6 +38,45 @@ def test_disconnected_window_disables_stream_controls(qtbot) -> None:
     assert not window.pause_button.isEnabled()
     assert not window.record_button.isEnabled()
     assert window.connection_badge.text() == "DISCONNECTED"
+
+
+def test_live_dashboard_uses_balanced_splitters_and_health_metrics(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.resize(1440, 900)
+    window.show()
+    qtbot.wait(20)
+
+    assert set(window.health_value_labels) == {
+        "sample_rate",
+        "crc_errors",
+        "sequence_gaps",
+        "source_drops",
+        "transport_drops",
+        "cdc_errors",
+        "uptime",
+    }
+    assert all(
+        label.property("role") == "metric"
+        for label in window.health_value_labels.values()
+    )
+    main_sizes = window.main_splitter.sizes()
+    right_sizes = window.right_splitter.sizes()
+    assert main_sizes[0] / main_sizes[1] >= 2.0
+    assert 1.1 <= right_sizes[0] / right_sizes[1] <= 1.5
+
+
+def test_attitude_metrics_use_readable_two_column_grid(qtbot) -> None:
+    view = AttitudeView()
+    qtbot.addWidget(view)
+    layout = view.layout()
+
+    columns = [layout.getItemPosition(index)[1] for index in range(layout.count())]
+
+    assert max(columns) == 1
+    assert all(
+        label.property("role") == "metric" for label in view.value_labels.values()
+    )
 
 
 def test_vibration_view_updates_three_curves_and_axis_units(qtbot) -> None:

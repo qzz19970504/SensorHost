@@ -15,13 +15,13 @@
 **Files:**
 - Modify: `host/tests/test_widgets.py`
 
-- [ ] **Step 1: Write failing layout tests**
+- [x] **Step 1: Write failing layout tests**
 
 Add assertions that `AttitudeView` uses two grid columns and that every value
 label has `role="metric"`. Add a `MainWindow` assertion for seven named health
 value labels and initial main/right splitter proportions.
 
-- [ ] **Step 2: Run the focused tests and verify RED**
+- [x] **Step 2: Run the focused tests and verify RED**
 
 Run:
 
@@ -40,22 +40,22 @@ health labels, and unexposed splitter sizes.
 - Modify: `host/src/sensor_host/presentation/main_window.py`
 - Modify: `host/src/sensor_host/presentation/orientation_view.py`
 
-- [ ] **Step 1: Apply semantic typography**
+- [x] **Step 1: Apply semantic typography**
 
 Set the base font to 13 px, eyebrow labels to 12 px, and metric labels to 16 px
 bold Consolas. Increase buttons and inputs to 32 px minimum height.
 
-- [ ] **Step 2: Balance the live dashboard**
+- [x] **Step 2: Balance the live dashboard**
 
 Expose `main_splitter` and `right_splitter`, initialize them near 70:30 and
 56:44, use a two-column attitude grid, and replace `health_summary` with seven
 equal-width metric cells stored in `health_value_labels`.
 
-- [ ] **Step 3: Run focused tests and verify GREEN**
+- [x] **Step 3: Run focused tests and verify GREEN**
 
 Run the Task 1 command. Expected: all selected tests pass.
 
-- [ ] **Step 4: Run the complete host suite**
+- [x] **Step 4: Run the complete host suite**
 
 ```powershell
 $env:QT_QPA_PLATFORM='offscreen'
@@ -69,7 +69,7 @@ Expected: all tests pass.
 **Files:**
 - Modify: `host/tests/golden/visual/dark-live-monitor.png`
 
-- [ ] **Step 1: Regenerate the deterministic baseline**
+- [x] **Step 1: Regenerate the deterministic baseline**
 
 ```powershell
 $env:QT_QPA_PLATFORM='offscreen'
@@ -78,12 +78,12 @@ $env:QT_QPA_PLATFORM='offscreen'
 
 Expected: PNG generation succeeds at 1920x1080.
 
-- [ ] **Step 2: Inspect the baseline and real 1440x900 UI**
+- [x] **Step 2: Inspect the baseline and real 1440x900 UI**
 
 Verify non-overlapping controls, readable metric hierarchy, balanced panes,
 live XYZ updates, orientation rendering, health status, and disconnect behavior.
 
-- [ ] **Step 3: Commit the polish**
+- [x] **Step 3: Commit the polish**
 
 ```powershell
 git add host/src/sensor_host/presentation host/tests/test_widgets.py host/tests/golden/visual/dark-live-monitor.png docs/superpowers/plans/2026-08-28-host-ui-polish.md

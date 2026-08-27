@@ -274,14 +274,14 @@ class AttitudeView(QFrame):
         layout.setContentsMargins(0, 0, 0, 0)
         self.value_labels: dict[str, QLabel] = {}
         for index, (key, title, unit) in enumerate(self._FIELDS):
-            row, column = divmod(index, 4)
+            row, column = divmod(index, 2)
             field = QFrame()
             field_layout = QVBoxLayout(field)
             field_layout.setContentsMargins(6, 4, 6, 4)
             title_label = QLabel(f"{title} · {unit}")
             title_label.setProperty("role", "muted")
             value_label = QLabel("—")
-            value_label.setProperty("role", "eyebrow")
+            value_label.setProperty("role", "metric")
             field_layout.addWidget(title_label)
             field_layout.addWidget(value_label)
             layout.addWidget(field, row, column)

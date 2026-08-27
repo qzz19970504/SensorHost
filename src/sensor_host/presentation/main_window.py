@@ -26,8 +26,8 @@ from sensor_host.acquisition import AcquisitionHealth, UiSnapshot
 
 _DEFAULT_WINDOW_WIDTH = 1440
 _DEFAULT_WINDOW_HEIGHT = 900
-_CARD_MARGIN = 14
-_LAYOUT_SPACING = 10
+_CARD_MARGIN = 16
+_LAYOUT_SPACING = 12
 
 
 def _card(title: str) -> tuple[QFrame, QVBoxLayout]:
@@ -60,7 +60,7 @@ class MainWindow(QMainWindow):
 
         central_widget = QWidget()
         root_layout = QVBoxLayout(central_widget)
-        root_layout.setContentsMargins(18, 12, 18, 16)
+        root_layout.setContentsMargins(20, 14, 20, 18)
         root_layout.setSpacing(_LAYOUT_SPACING)
         self.setCentralWidget(central_widget)
 
@@ -128,14 +128,17 @@ class MainWindow(QMainWindow):
         transport_drops = 0 if status is None else status.transport_drops
         cdc_errors = 0 if status is None else status.cdc_errors
         uptime = "—" if status is None else f"{status.uptime_us / 1_000_000.0:.1f}s"
-        self.health_summary.setText(
-            f"SAMPLES/S {snapshot.sample_rate_hz:,.0f}     "
-            f"CRC ERR {snapshot.parser_stats.crc_errors}     "
-            f"SEQ GAP {snapshot.parser_stats.sequence_gaps}     "
-            f"SOURCE DROP {source_drops}     "
-            f"TRANSPORT DROP {transport_drops}     "
-            f"CDC ERR {cdc_errors}     UPTIME {uptime}"
-        )
+        health_values = {
+            "sample_rate": f"{snapshot.sample_rate_hz:,.0f}",
+            "crc_errors": str(snapshot.parser_stats.crc_errors),
+            "sequence_gaps": str(snapshot.parser_stats.sequence_gaps),
+            "source_drops": str(source_drops),
+            "transport_drops": str(transport_drops),
+            "cdc_errors": str(cdc_errors),
+            "uptime": uptime,
+        }
+        for key, value in health_values.items():
+            self.health_value_labels[key].setText(value)
 
     def update_health(self, health: AcquisitionHealth) -> None:
         """Forward host-side counters to the diagnostics page."""
@@ -205,16 +208,16 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 10, 0, 0)
         layout.setSpacing(_LAYOUT_SPACING)
 
-        main_splitter = QSplitter()
+        self.main_splitter = QSplitter()
         vibration_card, self.vibration_container_layout = _card(
             "3-AXIS VIBRATION · g"
         )
         self.vibration_view = VibrationView()
         self.vibration_container_layout.addWidget(self.vibration_view, stretch=1)
-        main_splitter.addWidget(vibration_card)
+        self.main_splitter.addWidget(vibration_card)
 
-        right_splitter = QSplitter()
-        right_splitter.setOrientation(Qt.Orientation.Vertical)
+        self.right_splitter = QSplitter()
+        self.right_splitter.setOrientation(Qt.Orientation.Vertical)
         orientation_card, self.orientation_container_layout = _card(
             "JY61PL ORIENTATION"
         )
@@ -225,26 +228,51 @@ class MainWindow(QMainWindow):
         )
         self.attitude_view = AttitudeView()
         self.attitude_container_layout.addWidget(self.attitude_view, stretch=1)
-        right_splitter.addWidget(orientation_card)
-        right_splitter.addWidget(attitude_card)
-        right_splitter.setStretchFactor(0, 3)
-        right_splitter.setStretchFactor(1, 2)
-        main_splitter.addWidget(right_splitter)
-        main_splitter.setStretchFactor(0, 2)
-        main_splitter.setStretchFactor(1, 1)
-        layout.addWidget(main_splitter, stretch=1)
+        self.right_splitter.addWidget(orientation_card)
+        self.right_splitter.addWidget(attitude_card)
+        self.right_splitter.setStretchFactor(0, 5)
+        self.right_splitter.setStretchFactor(1, 4)
+        self.right_splitter.setSizes([500, 400])
+        self.main_splitter.addWidget(self.right_splitter)
+        self.main_splitter.setStretchFactor(0, 7)
+        self.main_splitter.setStretchFactor(1, 3)
+        self.main_splitter.setSizes([1000, 420])
+        layout.addWidget(self.main_splitter, stretch=1)
 
         health_card, self.health_container_layout = _card("STREAM HEALTH")
         health_card.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Fixed,
         )
-        self.health_summary = QLabel(
-            "SAMPLES/S —     CRC ERR 0     SEQ GAP 0     SOURCE DROP 0     "
-            "TRANSPORT DROP 0     CDC BUSY 0     UPTIME —"
+        metrics_layout = QHBoxLayout()
+        metrics_layout.setContentsMargins(0, 0, 0, 0)
+        metrics_layout.setSpacing(8)
+        self.health_value_labels: dict[str, QLabel] = {}
+        health_fields = (
+            ("sample_rate", "SAMPLES/S", "—"),
+            ("crc_errors", "CRC ERR", "0"),
+            ("sequence_gaps", "SEQ GAP", "0"),
+            ("source_drops", "SOURCE DROP", "0"),
+            ("transport_drops", "TRANSPORT DROP", "0"),
+            ("cdc_errors", "CDC ERR", "0"),
+            ("uptime", "UPTIME", "—"),
         )
-        self.health_summary.setProperty("role", "muted")
-        self.health_container_layout.addWidget(self.health_summary)
+        for key, title, initial_value in health_fields:
+            field = QFrame()
+            field_layout = QVBoxLayout(field)
+            field_layout.setContentsMargins(4, 0, 4, 0)
+            field_layout.setSpacing(2)
+            title_label = QLabel(title)
+            title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            title_label.setProperty("role", "health-label")
+            value_label = QLabel(initial_value)
+            value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            value_label.setProperty("role", "metric")
+            field_layout.addWidget(title_label)
+            field_layout.addWidget(value_label)
+            metrics_layout.addWidget(field, stretch=1)
+            self.health_value_labels[key] = value_label
+        self.health_container_layout.addLayout(metrics_layout)
         layout.addWidget(health_card)
         return tab
 

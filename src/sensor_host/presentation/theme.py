@@ -41,7 +41,7 @@ def dark_stylesheet() -> str:
         background: {COLORS['background']};
         color: {COLORS['text']};
         font-family: "Segoe UI", "Microsoft YaHei UI";
-        font-size: 12px;
+        font-size: 13px;
     }}
     QFrame[card="true"] {{
         background: {COLORS['panel']};
@@ -51,14 +51,25 @@ def dark_stylesheet() -> str:
     QLabel[role="eyebrow"] {{
         color: {COLORS['cyan']};
         font-family: "Consolas";
+        font-size: 12px;
         font-weight: 700;
-        letter-spacing: 2px;
+        letter-spacing: 1px;
     }}
     QLabel[role="muted"] {{ color: {COLORS['muted']}; }}
+    QLabel[role="metric"] {{
+        color: {COLORS['text']};
+        font-family: "Consolas";
+        font-size: 16px;
+        font-weight: 700;
+    }}
+    QLabel[role="health-label"] {{
+        color: {COLORS['muted']};
+        font-size: 11px;
+    }}
     QLabel[state="online"] {{ color: {COLORS['cyan']}; }}
     QLabel[state="offline"] {{ color: {COLORS['muted']}; }}
     QPushButton {{
-        min-height: 30px;
+        min-height: 32px;
         padding: 0 12px;
         border: 1px solid {COLORS['border']};
         border-radius: 6px;
@@ -80,7 +91,7 @@ def dark_stylesheet() -> str:
         background: #B83C3C;
     }}
     QComboBox, QLineEdit {{
-        min-height: 30px;
+        min-height: 32px;
         border: 1px solid {COLORS['border']};
         border-radius: 6px;
         padding: 0 8px;
@@ -89,7 +100,7 @@ def dark_stylesheet() -> str:
     QTabWidget::pane {{ border: 0; }}
     QTabBar::tab {{
         color: {COLORS['muted']};
-        padding: 10px 20px;
+        padding: 10px 22px;
         border-bottom: 2px solid transparent;
         font-family: "Consolas";
         font-weight: 700;
