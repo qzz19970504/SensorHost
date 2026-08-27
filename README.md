@@ -155,4 +155,3 @@ git diff --check
 ```
 
 协议变更还必须同步更新 `docs/PROTOCOL.md`、golden frames、固件 C 测试和 Python 测试。
-

@@ -57,4 +57,3 @@ class ConsoleView(QWidget):
         character_format.setForeground(QColor(color))
         self.transcript.setCurrentCharFormat(character_format)
         self.transcript.appendPlainText(f"[{category}] {message}")
-
