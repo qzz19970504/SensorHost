@@ -17,7 +17,7 @@ STM32 在 CDC 或 UART2 上发送同一种二进制帧。两条链路不会同�
 | 8 | 2 | header_size | 固定 `28` |
 | 10 | 2 | payload_size | `0..3577` |
 | 12 | 4 | sequence | 全局发送序号，模 2^32 递增 |
-| 16 | 8 | timestamp_us | TIM2 扩展得到的 MCU 单调微秒时间 |
+| 16 | 8 | timestamp_us | TIM2 扩展得到的 MCU 单调微秒时间；IIS 帧在 FIFO DMA 启动前取锚 |
 | 24 | 2 | item_count | payload 中逻辑项目数 |
 | 26 | 2 | reserved | 固定 `0` |
 | 28 | N | payload | 类型相关 |
@@ -49,7 +49,7 @@ flags：
 - bit 1：配置启用了 FIFO timestamp batching。
 - bit 2：自上一可报告批次后发生过 IIS 源侧丢弃/旧帧淘汰。
 
-默认每 32 个 batching event 插入 timestamp word。主机扩展 32 位传感器时间戳的回绕，并以相邻加速度周期约 37.5 µs 重建采样时间。帧头 `timestamp_us` 是 DMA 批次完成时的 MCU 时间锚，不应把所有样本简单等间隔地从帧尾反推；优先使用 FIFO timestamp tag。
+默认每 32 个 batching event 插入 timestamp word。主机扩展 32 位传感器时间戳的回绕，并用同一帧的 MCU `timestamp_us` 锚定传感器时钟到 MCU 单调时间轴，再以相邻加速度周期约 37.5 µs 重建采样时间。后续不含 timestamp tag 的帧沿用最近一次时钟偏移；新 tag 会重新校准偏移。
 
 ## 4. JY61PL（type=2）
 
@@ -71,7 +71,7 @@ payload 固定 64 字节、`item_count=1`：
 | 0 | u8 | status_version=`1` |
 | 1 | u8 | active_transport：CDC=`1`，UART=`2` |
 | 2 | u8 | pending_transport：无=`0`，CDC=`1`，UART=`2` |
-| 3 | u8 | acquisition_state：停止=`0`，运行=`1` |
+| 3 | u8 | acquisition_state：停止=`0`，运行=`1`，配置失败安全态=`2` |
 | 4 | u16 | watermark_words |
 | 6 | u16 | free_data_buffers |
 | 8 | u32 | uart_credit_bytes |
@@ -127,10 +127,10 @@ CDC 是启动默认值。UART credit 耗尽不会停止传感器：采集继续�
 推荐解析步骤：
 
 1. 搜索 `SDF1`，只保留可能构成下一 magic 的末尾 3 字节。
-2. 等待 28 字节头；拒绝 version、header_size 或 payload_size 非法的候选，并从候选首字节后重新搜索。
-3. 等待 `28 + payload_size + 4` 字节。
+2. 等待 28 字节公共头；拒绝 header_size 或 payload_size 越界的候选，并从候选首字节后重新搜索。V1 要求 `header_size=28`，未来版本允许 `28..256`。
+3. 等待 `header_size + payload_size + 4` 字节。
 4. CRC 错误时从候选首字节后重搜，不按错误长度盲跳。
-5. CRC 正确后再解释 type；未知 type 计数并按合法长度跳过。
+5. CRC 正确后再解释 version/type；未知 version 或 type 都计数并按已验证的完整长度跳过，payload 内出现 `SDF1` 不会造成误锁定。
 6. 用全局 sequence 统计缺口，处理 `0xFFFFFFFF -> 0` 回绕。
 
 仓库中的 `test/protocol.py` 是参考实现。

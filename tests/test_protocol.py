@@ -135,6 +135,38 @@ def test_counts_sequence_gap() -> None:
     assert parser.stats.sequence_gaps == 2
 
 
+def test_skips_crc_valid_future_version_as_one_bounded_frame() -> None:
+    parser = StreamParser()
+    future_payload = b"prefix-SDF1-inside-payload-suffix"
+    future = encode_frame(
+        MessageType.CLI_RESPONSE,
+        20,
+        future_payload,
+        version=2,
+    )
+    current = encode_frame(MessageType.CLI_RESPONSE, 21, b"current")
+
+    frames = parser.feed(future + current)
+
+    assert [frame.cli_text for frame in frames] == ["current"]
+    assert parser.stats.unknown_versions == 1
+    assert parser.stats.bytes_discarded == 0
+    assert parser.stats.sequence_gaps == 0
+
+
+def test_future_version_still_requires_valid_crc() -> None:
+    future = bytearray(
+        encode_frame(MessageType.CLI_RESPONSE, 30, b"SDF1", version=2)
+    )
+    future[-1] ^= 0x80
+    parser = StreamParser()
+
+    parser.feed(future)
+
+    assert parser.stats.unknown_versions == 0
+    assert parser.stats.crc_errors == 1
+
+
 def test_decodes_jy61pl_scaling_and_status() -> None:
     jy_payload = struct.pack("<7h", 16384, -16384, 0, 2534, 16384, -16384, 0)
     status_payload = bytearray(64)
@@ -162,7 +194,7 @@ def test_decodes_jy61pl_scaling_and_status() -> None:
     assert status.uptime_us == 987654321
 
 
-def test_decodes_iis_tags_and_sensor_timestamps() -> None:
+def test_decodes_iis_tags_on_mcu_monotonic_timeline() -> None:
     timestamp_word = bytes([4 << 3]) + struct.pack("<I", 1000) + b"\x00\x00"
     accel_word = bytes([2 << 3]) + struct.pack("<hhh", 100, -200, 300)
     parser = StreamParser()
@@ -183,5 +215,66 @@ def test_decodes_iis_tags_and_sensor_timestamps() -> None:
     assert frame.iis_words[1].sensor_tag == 2
     assert frame.iis_words[1].acceleration_raw == (100, -200, 300)
     assert frame.iis_samples is not None
-    assert frame.iis_samples[0].timestamp_us == pytest.approx(25000.0)
+    assert frame.iis_samples[0].timestamp_us == pytest.approx(999999.0)
     assert frame.iis_samples[0].acceleration_raw == (100, -200, 300)
+
+
+def test_iis_timestamp_offset_persists_without_a_tag() -> None:
+    timestamp_word = bytes([4 << 3]) + struct.pack("<I", 1000) + b"\x00\x00"
+    accel_word = bytes([2 << 3]) + struct.pack("<hhh", 1, 2, 3)
+    parser = StreamParser()
+
+    first = parser.feed(
+        encode_frame(
+            MessageType.IIS3DWB_FIFO,
+            1,
+            timestamp_word + accel_word,
+            timestamp_us=1_000_000,
+            item_count=2,
+        )
+    )[0]
+    second = parser.feed(
+        encode_frame(
+            MessageType.IIS3DWB_FIFO,
+            2,
+            accel_word,
+            timestamp_us=1_000_100,
+            item_count=1,
+        )
+    )[0]
+
+    assert first.iis_samples is not None
+    assert second.iis_samples is not None
+    assert first.iis_samples[0].timestamp_us == pytest.approx(1_000_000.0)
+    assert second.iis_samples[0].timestamp_us == pytest.approx(1_000_037.5)
+
+
+def test_iis_sensor_timestamp_wrap_stays_on_mcu_timeline() -> None:
+    accel_word = bytes([2 << 3]) + struct.pack("<hhh", 1, 2, 3)
+    before_wrap = bytes([4 << 3]) + struct.pack("<I", 0xFFFFFFF0) + b"\x00\x00"
+    after_wrap = bytes([4 << 3]) + struct.pack("<I", 0x00000010) + b"\x00\x00"
+    parser = StreamParser()
+
+    first = parser.feed(
+        encode_frame(
+            MessageType.IIS3DWB_FIFO,
+            1,
+            before_wrap + accel_word,
+            timestamp_us=2_000_000,
+            item_count=2,
+        )
+    )[0]
+    second = parser.feed(
+        encode_frame(
+            MessageType.IIS3DWB_FIFO,
+            2,
+            after_wrap + accel_word,
+            timestamp_us=2_000_800,
+            item_count=2,
+        )
+    )[0]
+
+    assert first.iis_samples is not None
+    assert second.iis_samples is not None
+    assert first.iis_samples[0].timestamp_us == pytest.approx(2_000_000.0)
+    assert second.iis_samples[0].timestamp_us == pytest.approx(2_000_800.0)
