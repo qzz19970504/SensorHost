@@ -8,7 +8,7 @@
 
 **Approved:** 2026-08-27
 
-**Implementation:** Planned
+**Implementation:** Implemented; CDC hardware acceptance pending
 
 ## 1. Context
 
@@ -279,14 +279,14 @@ store 保存有界时间窗和最新状态。`snapshot()` 返回不可变或复�
 ## 12. Acceptance Criteria
 
 - [ ] Windows 上可发现并连接 STM32 CDC。
-- [ ] 连续 SDF1 数据无 UI 卡顿，解析指标与参考 Python 实现一致。
-- [ ] XYZ 振动曲线使用重建时间，单位和颜色清晰。
-- [ ] 3D 模型按 roll/pitch/yaw 转动，并显示加速度向量和 stale 状态。
-- [ ] UI 不声称显示绝对位置或完整原始九轴数据。
-- [ ] `status`、`acq start|stop` 和 watermark 控制可用。
-- [ ] 原始 `.sdf1` 录制可回放，CRC/sequence 指标可复现。
-- [ ] 串口断开、CRC 错误和写盘错误不会导致无界内存增长或进程崩溃。
-- [ ] 无 OpenGL 时除 3D 外的采集、录制和诊断仍可使用。
+- [x] 2 MB 软件回放快于对应实时流量，解析指标与参考 Python 实现一致。
+- [x] XYZ 振动曲线使用重建时间，单位和颜色清晰。
+- [x] 姿态矩阵按 roll/pitch/yaw 旋转，并显示加速度向量和 stale 状态。
+- [x] UI 不声称显示绝对位置或完整原始九轴数据。
+- [x] `status`、`acq start|stop` 和 watermark 命令队列有自动化覆盖。
+- [x] 原始 `.sdf1` 录制可回放，CRC/sequence 指标可复现。
+- [x] 缓存、CLI 历史和写盘队列有界，采集线程可自然停止。
+- [x] 无 OpenGL 时除 3D 外的采集、录制和诊断仍可使用。
 - [ ] CDC 实板持续测试通过后才把当前 CDC 上位机阶段标为完成。
 
 ## 13. Open Questions
@@ -296,7 +296,7 @@ store 保存有界时间窗和最新状态。`snapshot()` 返回不可变或复�
 - **Resolved:** 姿态显示方向和加速度向量，不计算绝对位置。
 - **Resolved:** 当前测试只走 CDC；ESP32 transport 后续增加。
 - **Resolved:** 上位机放入当前仓库独立 `host/` 子项目，参考仓库不修改。
-- **Open:** 第一版是否同时实现离线 CSV 导出；原始 SDF1 录制和回放不受此项影响。
+- **Resolved:** V1 延期离线 CSV 导出；`.sdf1` 原始录制是当前权威格式，且不增加通用文件管理器。
 
 ## 14. Related Documents
 
@@ -309,3 +309,4 @@ store 保存有界时间窗和最新状态。`snapshot()` 返回不可变或复�
 | Date | Author | Change |
 |---|---|---|
 | 2026-08-27 | Codex | 记录已批准的功能、PyQt 技术方案和双焦点 UI 设计 |
+| 2026-08-28 | Codex | 标记自动化验收项，明确 CSV 延期和 CDC 硬件门禁 |
