@@ -21,21 +21,23 @@ from sensor_host.presentation.vibration_view import VibrationView
 from sensor_host.presentation.orientation_view import AttitudeView, OrientationView
 from sensor_host.presentation.console_view import ConsoleView
 from sensor_host.presentation.diagnostics_view import DiagnosticsView
+from sensor_host.presentation.spacing import SPACE
 from sensor_host.acquisition import AcquisitionHealth, UiSnapshot
 
 
 _DEFAULT_WINDOW_WIDTH = 1440
 _DEFAULT_WINDOW_HEIGHT = 900
-_CARD_MARGIN = 16
-_LAYOUT_SPACING = 12
-
-
 def _card(title: str) -> tuple[QFrame, QVBoxLayout]:
     frame = QFrame()
     frame.setProperty("card", True)
     layout = QVBoxLayout(frame)
-    layout.setContentsMargins(_CARD_MARGIN, _CARD_MARGIN, _CARD_MARGIN, _CARD_MARGIN)
-    layout.setSpacing(_LAYOUT_SPACING)
+    layout.setContentsMargins(
+        SPACE.section,
+        SPACE.section,
+        SPACE.section,
+        SPACE.section,
+    )
+    layout.setSpacing(SPACE.section)
     heading = QLabel(title)
     heading.setProperty("role", "eyebrow")
     layout.addWidget(heading)
@@ -60,8 +62,13 @@ class MainWindow(QMainWindow):
 
         central_widget = QWidget()
         root_layout = QVBoxLayout(central_widget)
-        root_layout.setContentsMargins(20, 14, 20, 18)
-        root_layout.setSpacing(_LAYOUT_SPACING)
+        root_layout.setContentsMargins(
+            SPACE.major,
+            SPACE.section,
+            SPACE.major,
+            SPACE.major,
+        )
+        root_layout.setSpacing(SPACE.normal)
         self.setCentralWidget(central_widget)
 
         root_layout.addWidget(self._create_header())
@@ -147,7 +154,8 @@ class MainWindow(QMainWindow):
     def _create_header(self) -> QFrame:
         header = QFrame()
         layout = QHBoxLayout(header)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(0, SPACE.tight, 0, SPACE.tight)
+        layout.setSpacing(SPACE.compact)
         brand = QLabel("STM32 SENSOR DESKTOP")
         brand.setProperty("role", "eyebrow")
         layout.addWidget(brand)
@@ -173,14 +181,20 @@ class MainWindow(QMainWindow):
         toolbar = QFrame()
         toolbar.setProperty("card", True)
         layout = QHBoxLayout(toolbar)
-        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setContentsMargins(
+            SPACE.section,
+            SPACE.compact,
+            SPACE.section,
+            SPACE.compact,
+        )
+        layout.setSpacing(SPACE.compact)
         sensor_label = QLabel("IIS3DWB")
         sensor_label.setProperty("role", "eyebrow")
         layout.addWidget(sensor_label)
         rate_label = QLabel("26.667 kHz")
         rate_label.setProperty("role", "muted")
         layout.addWidget(rate_label)
-        layout.addSpacing(18)
+        layout.addSpacing(SPACE.section)
         layout.addWidget(QLabel("WINDOW"))
         self.window_combo = QComboBox()
         for seconds in (1, 5, 10, 30):
@@ -205,8 +219,8 @@ class MainWindow(QMainWindow):
     def _create_live_tab(self) -> QWidget:
         tab = QWidget()
         layout = QVBoxLayout(tab)
-        layout.setContentsMargins(0, 10, 0, 0)
-        layout.setSpacing(_LAYOUT_SPACING)
+        layout.setContentsMargins(0, SPACE.section, 0, 0)
+        layout.setSpacing(SPACE.normal)
 
         self.main_splitter = QSplitter()
         vibration_card, self.vibration_container_layout = _card(
@@ -244,9 +258,10 @@ class MainWindow(QMainWindow):
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Fixed,
         )
-        metrics_layout = QHBoxLayout()
-        metrics_layout.setContentsMargins(0, 0, 0, 0)
-        metrics_layout.setSpacing(8)
+        self.health_metrics_layout = QHBoxLayout()
+        self.health_metrics_layout.setContentsMargins(0, 0, 0, 0)
+        self.health_metrics_layout.setSpacing(SPACE.compact)
+        self.health_field_layouts: list[QVBoxLayout] = []
         self.health_value_labels: dict[str, QLabel] = {}
         health_fields = (
             ("sample_rate", "SAMPLES/S", "—"),
@@ -260,8 +275,13 @@ class MainWindow(QMainWindow):
         for key, title, initial_value in health_fields:
             field = QFrame()
             field_layout = QVBoxLayout(field)
-            field_layout.setContentsMargins(4, 0, 4, 0)
-            field_layout.setSpacing(2)
+            field_layout.setContentsMargins(
+                SPACE.compact,
+                SPACE.tight,
+                SPACE.compact,
+                SPACE.tight,
+            )
+            field_layout.setSpacing(SPACE.tight)
             title_label = QLabel(title)
             title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             title_label.setProperty("role", "health-label")
@@ -270,9 +290,10 @@ class MainWindow(QMainWindow):
             value_label.setProperty("role", "metric")
             field_layout.addWidget(title_label)
             field_layout.addWidget(value_label)
-            metrics_layout.addWidget(field, stretch=1)
+            self.health_metrics_layout.addWidget(field, stretch=1)
+            self.health_field_layouts.append(field_layout)
             self.health_value_labels[key] = value_label
-        self.health_container_layout.addLayout(metrics_layout)
+        self.health_container_layout.addLayout(self.health_metrics_layout)
         layout.addWidget(health_card)
         return tab
 
@@ -291,7 +312,8 @@ class MainWindow(QMainWindow):
     def _wrap_tab(view: QWidget) -> QWidget:
         tab = QWidget()
         layout = QVBoxLayout(tab)
-        layout.setContentsMargins(0, 10, 0, 0)
+        layout.setContentsMargins(0, SPACE.section, 0, 0)
+        layout.setSpacing(SPACE.normal)
         layout.addWidget(view)
         return tab
 

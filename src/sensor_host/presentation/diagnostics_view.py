@@ -7,6 +7,7 @@ from dataclasses import asdict
 from PyQt6.QtWidgets import QGridLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
 
 from sensor_host.acquisition import AcquisitionHealth, UiSnapshot
+from sensor_host.presentation.spacing import SPACE
 
 
 class DiagnosticsView(QWidget):
@@ -20,6 +21,14 @@ class DiagnosticsView(QWidget):
         scroll.setWidgetResizable(True)
         contents = QWidget()
         self.grid = QGridLayout(contents)
+        self.grid.setContentsMargins(
+            SPACE.section,
+            SPACE.section,
+            SPACE.section,
+            SPACE.section,
+        )
+        self.grid.setHorizontalSpacing(SPACE.major)
+        self.grid.setVerticalSpacing(SPACE.compact)
         self.grid.setColumnStretch(1, 1)
         scroll.setWidget(contents)
         root.addWidget(scroll)
@@ -79,6 +88,9 @@ class DiagnosticsView(QWidget):
         self._replace_values(asdict(health))
 
     def _add_section(self, title: str, fields: tuple[str, ...]) -> None:
+        if self._next_row:
+            self.grid.setRowMinimumHeight(self._next_row, SPACE.compact)
+            self._next_row += 1
         heading = QLabel(title)
         heading.setProperty("role", "eyebrow")
         self.grid.addWidget(heading, self._next_row, 0, 1, 2)

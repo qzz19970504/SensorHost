@@ -3,7 +3,10 @@ import numpy as np
 from sensor_host.acquisition import UiSnapshot
 from sensor_host.presentation.main_window import MainWindow
 from sensor_host.presentation.console_view import ConsoleView
+from sensor_host.presentation.diagnostics_view import DiagnosticsView
 from sensor_host.presentation.orientation_view import AttitudeView, OrientationView
+from sensor_host.presentation.spacing import SPACE
+from sensor_host.presentation.theme import dark_stylesheet
 from sensor_host.presentation.vibration_view import VibrationView
 from sensor_host.protocol import ParserStats
 
@@ -132,3 +135,47 @@ def test_console_bounds_transcript_and_emits_trimmed_command(qtbot) -> None:
     for index in range(150):
         console.append_local(f"line {index}")
     assert console.transcript.document().blockCount() <= 100
+
+
+def test_balanced_spacing_tokens_are_stable() -> None:
+    assert (
+        SPACE.tight,
+        SPACE.compact,
+        SPACE.normal,
+        SPACE.section,
+        SPACE.major,
+    ) == (4, 8, 12, 16, 24)
+
+
+def test_tabs_and_pages_have_breathing_room(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+    margins = window.live_tab.layout().contentsMargins()
+
+    assert margins.top() == SPACE.section
+    assert window.live_tab.layout().spacing() == SPACE.normal
+    assert "padding: 12px 24px" in dark_stylesheet()
+
+
+def test_card_and_metric_spacing_is_balanced(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    card_margins = window.vibration_container_layout.contentsMargins()
+    assert card_margins.left() == SPACE.section
+    assert window.vibration_container_layout.spacing() == SPACE.section
+    assert window.health_metrics_layout.spacing() == SPACE.compact
+    assert all(
+        layout.spacing() == SPACE.tight for layout in window.health_field_layouts
+    )
+
+
+def test_console_and_diagnostics_pages_use_section_padding(qtbot) -> None:
+    console = ConsoleView()
+    diagnostics = DiagnosticsView()
+    qtbot.addWidget(console)
+    qtbot.addWidget(diagnostics)
+
+    assert console.layout().spacing() == SPACE.normal
+    margins = diagnostics.grid.contentsMargins()
+    assert (margins.left(), margins.top()) == (SPACE.section, SPACE.section)

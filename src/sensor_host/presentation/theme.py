@@ -4,6 +4,8 @@ from pathlib import Path
 
 from PyQt6.QtGui import QFontDatabase
 
+from sensor_host.presentation.spacing import SPACE
+
 COLORS = {
     "background": "#0D1725",
     "panel": "#172538",
@@ -100,7 +102,7 @@ def dark_stylesheet() -> str:
     QTabWidget::pane {{ border: 0; }}
     QTabBar::tab {{
         color: {COLORS['muted']};
-        padding: 10px 22px;
+        padding: {SPACE.normal}px {SPACE.major}px;
         border-bottom: 2px solid transparent;
         font-family: "Consolas";
         font-weight: 700;

@@ -7,6 +7,7 @@ from PyQt6.QtGui import QColor, QTextCharFormat
 from PyQt6.QtWidgets import QHBoxLayout, QLineEdit, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget
 
 from sensor_host.presentation.theme import COLORS
+from sensor_host.presentation.spacing import SPACE
 
 
 class ConsoleView(QWidget):
@@ -20,12 +21,14 @@ class ConsoleView(QWidget):
             raise ValueError("max_blocks must be positive")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(SPACE.normal)
         self.transcript = QPlainTextEdit()
         self.transcript.setReadOnly(True)
         self.transcript.document().setMaximumBlockCount(max_blocks)
         self.transcript.setPlaceholderText("Firmware CLI responses appear here")
         layout.addWidget(self.transcript, stretch=1)
         input_row = QHBoxLayout()
+        input_row.setSpacing(SPACE.compact)
         self.command_input = QLineEdit()
         self.command_input.setPlaceholderText("status | acq start | acq stop | acq watermark 256")
         self.send_button = QPushButton("SEND")

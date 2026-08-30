@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
 
 from sensor_host.acquisition import UiSnapshot
 from sensor_host.presentation.theme import COLORS
+from sensor_host.presentation.spacing import SPACE
 
 
 _STALE_AFTER_S = 0.5
@@ -164,8 +165,9 @@ class OrientationView(QFrame):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
+        layout.setSpacing(SPACE.compact)
         status_row = QHBoxLayout()
+        status_row.setSpacing(SPACE.compact)
         self.mode_label = QLabel()
         self.mode_label.setProperty("role", "eyebrow")
         self.status_label = QLabel("WAITING")
@@ -272,12 +274,20 @@ class AttitudeView(QFrame):
         super().__init__()
         layout = QGridLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setHorizontalSpacing(SPACE.normal)
+        layout.setVerticalSpacing(SPACE.normal)
         self.value_labels: dict[str, QLabel] = {}
         for index, (key, title, unit) in enumerate(self._FIELDS):
             row, column = divmod(index, 2)
             field = QFrame()
             field_layout = QVBoxLayout(field)
-            field_layout.setContentsMargins(6, 4, 6, 4)
+            field_layout.setContentsMargins(
+                SPACE.compact,
+                SPACE.compact,
+                SPACE.compact,
+                SPACE.compact,
+            )
+            field_layout.setSpacing(SPACE.tight)
             title_label = QLabel(f"{title} · {unit}")
             title_label.setProperty("role", "muted")
             value_label = QLabel("—")
