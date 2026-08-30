@@ -48,6 +48,16 @@ Remove-Item Env:QT_QPA_PLATFORM
 
 CDC 适配器构造时使用 `115200` 作为串口 API 的占位值；USB CDC 的实际线速不由该波特率选择决定。
 
+## Packaged Windows build
+
+在仓库根目录运行以下命令可生成经过源码测试和启动自检的单文件 Windows x64 EXE：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\package_host.ps1
+```
+
+产物写入 `dist/host/STM32SensorHost-<version>-win64.exe`，同目录 JSON 保存文件大小和 SHA-256。Python 选择顺序、隔离 venv、依赖升级、校验方式和常见问题见 [`docs/HOST_BUILD_ENVIRONMENT.md`](../docs/HOST_BUILD_ENVIRONMENT.md)。
+
 ## Setup
 
 可编辑安装便于开发时直接加载 `host/src/` 的修改：
