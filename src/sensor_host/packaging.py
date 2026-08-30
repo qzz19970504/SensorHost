@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
@@ -41,3 +42,17 @@ def write_manifest(artifact: Path) -> Path:
         encoding=MANIFEST_ENCODING,
     )
     return manifest_path
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Write a manifest for the single artifact path passed on the command line."""
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if len(arguments) != 1:
+        raise SystemExit("usage: python -m sensor_host.packaging <artifact.exe>")
+    manifest_path = write_manifest(Path(arguments[0]))
+    print(manifest_path)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

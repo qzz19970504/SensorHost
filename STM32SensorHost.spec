@@ -6,6 +6,8 @@ from PyInstaller.utils.hooks import collect_all
 
 from sensor_host.packaging import artifact_name
 
+WINDOWS_SYSTEM_ICU_DLLS = {"icuuc.dll", "icudt78.dll"}
+
 
 host_root = Path(SPECPATH).resolve()
 source_root = host_root / "src"
@@ -33,6 +35,11 @@ analysis = Analysis(
     noarchive=False,
     optimize=0,
 )
+analysis.binaries = [
+    binary
+    for binary in analysis.binaries
+    if binary[0].lower() not in WINDOWS_SYSTEM_ICU_DLLS
+]
 python_archive = PYZ(analysis.pure)
 
 executable = EXE(

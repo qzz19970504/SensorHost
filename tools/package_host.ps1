@@ -116,16 +116,9 @@ Copy-Item -LiteralPath $BuiltArtifact -Destination $FinalArtifact -Force
 
 Invoke-PackagedSmokeTest -Executable $FinalArtifact
 
-$PreviousArtifactEnvironment = $env:SENSOR_HOST_ARTIFACT
-try {
-    $env:SENSOR_HOST_ARTIFACT = $FinalArtifact
-    & $BuildPython -c 'import os; from pathlib import Path; from sensor_host.packaging import write_manifest; print(write_manifest(Path(os.environ["SENSOR_HOST_ARTIFACT"])))'
-    if ($LASTEXITCODE -ne 0) {
-        throw 'Failed to write the artifact manifest.'
-    }
-}
-finally {
-    $env:SENSOR_HOST_ARTIFACT = $PreviousArtifactEnvironment
+& $BuildPython -m sensor_host.packaging $FinalArtifact
+if ($LASTEXITCODE -ne 0) {
+    throw 'Failed to write the artifact manifest.'
 }
 
 Write-Host "Packaged host: $FinalArtifact"

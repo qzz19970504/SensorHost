@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 from sensor_host.app import main
-from sensor_host.packaging import artifact_name, write_manifest
+from sensor_host.packaging import artifact_name, main as packaging_main, write_manifest
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
@@ -21,6 +21,14 @@ def test_manifest_contains_filename_size_and_sha256(tmp_path) -> None:
     assert manifest["artifact"] == artifact.name
     assert manifest["bytes"] == len(b"host-executable")
     assert len(manifest["sha256"]) == 64
+
+
+def test_packaging_module_writes_manifest_from_path_argument(tmp_path) -> None:
+    artifact = tmp_path / artifact_name()
+    artifact.write_bytes(b"packaged-host")
+
+    assert packaging_main([str(artifact)]) == 0
+    assert artifact.with_suffix(".json").exists()
 
 
 def test_application_smoke_mode_constructs_window_without_event_loop(
@@ -43,6 +51,16 @@ def test_pyinstaller_recipe_is_windowed_onefile() -> None:
     assert "COLLECT(" not in recipe
 
 
+def test_pyinstaller_recipe_excludes_foreign_system_icu() -> None:
+    recipe = (REPOSITORY_ROOT / "host" / "STM32SensorHost.spec").read_text(
+        encoding="utf-8"
+    )
+
+    assert "WINDOWS_SYSTEM_ICU_DLLS" in recipe
+    assert '"icuuc.dll"' in recipe
+    assert '"icudt78.dll"' in recipe
+
+
 def test_build_dependency_is_pinned() -> None:
     requirements = (
         REPOSITORY_ROOT / "host" / "requirements-build.txt"
@@ -58,4 +76,4 @@ def test_build_script_runs_tests_smoke_and_manifest() -> None:
 
     assert "test_protocol.py" in script
     assert "--smoke-test" in script
-    assert "write_manifest" in script
+    assert "sensor_host.packaging" in script
