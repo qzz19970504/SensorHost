@@ -464,7 +464,8 @@ Expected: all Python tests pass and compileall is silent.
 Run:
 
 ```powershell
-& .\host\.venv\Scripts\python.exe .\host\tools\capture_visual_baseline.py
+& .\host\.venv\Scripts\python.exe .\host\tools\capture_visual_baseline.py `
+  --output .\host\tests\golden\visual\dark-live-monitor.png
 ```
 
 Inspect `host/tests/golden/visual/dark-live-monitor.png` at original resolution. Confirm tab padding, card-title separation, health label/value separation, diagnostic margins, and console transcript/input gap; reject clipping, crowding, or changed splitter proportions.

@@ -77,3 +77,12 @@ def test_build_script_runs_tests_smoke_and_manifest() -> None:
     assert "test_protocol.py" in script
     assert "--smoke-test" in script
     assert "sensor_host.packaging" in script
+
+
+def test_build_script_terminates_the_onefile_process_tree_on_timeout() -> None:
+    script = (REPOSITORY_ROOT / "tools" / "package_host.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "taskkill.exe" in script
+    assert "'/T'" in script

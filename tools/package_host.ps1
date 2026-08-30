@@ -60,7 +60,8 @@ function Invoke-PackagedSmokeTest {
 
     $Process = Start-Process -FilePath $Executable -ArgumentList '--smoke-test' -PassThru
     if (-not $Process.WaitForExit($SmokeTimeoutMilliseconds)) {
-        $Process.Kill()
+        $TaskKill = Join-Path $env:SystemRoot 'System32\taskkill.exe'
+        & $TaskKill '/PID' $Process.Id '/T' '/F' | Out-Null
         throw "Packaged smoke test exceeded $SmokeTimeoutMilliseconds ms."
     }
     if ($Process.ExitCode -ne 0) {
