@@ -1,7 +1,10 @@
 import json
+from pathlib import Path
 
 from sensor_host.app import main
 from sensor_host.packaging import artifact_name, write_manifest
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_artifact_name_uses_project_version_and_platform() -> None:
@@ -28,3 +31,31 @@ def test_application_smoke_mode_constructs_window_without_event_loop(
 
     assert main(["stm32-sensor-host", "--smoke-test"]) == 0
     assert qapp.styleSheet() == original_stylesheet
+
+
+def test_pyinstaller_recipe_is_windowed_onefile() -> None:
+    recipe = (REPOSITORY_ROOT / "host" / "STM32SensorHost.spec").read_text(
+        encoding="utf-8"
+    )
+
+    assert "console=False" in recipe
+    assert "EXE(" in recipe
+    assert "COLLECT(" not in recipe
+
+
+def test_build_dependency_is_pinned() -> None:
+    requirements = (
+        REPOSITORY_ROOT / "host" / "requirements-build.txt"
+    ).read_text(encoding="utf-8")
+
+    assert requirements.strip() == "pyinstaller==6.16.0"
+
+
+def test_build_script_runs_tests_smoke_and_manifest() -> None:
+    script = (REPOSITORY_ROOT / "tools" / "package_host.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "test_protocol.py" in script
+    assert "--smoke-test" in script
+    assert "write_manifest" in script

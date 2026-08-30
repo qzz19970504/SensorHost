@@ -1,0 +1,55 @@
+"""PyInstaller recipe for the windowed single-file Windows host."""
+
+from pathlib import Path
+
+from PyInstaller.utils.hooks import collect_all
+
+from sensor_host.packaging import artifact_name
+
+
+host_root = Path(SPECPATH).resolve()
+source_root = host_root / "src"
+entry_point = source_root / "sensor_host" / "app.py"
+
+datas = []
+binaries = []
+hiddenimports = []
+for package_name in ("pyqtgraph", "OpenGL"):
+    package_datas, package_binaries, package_hiddenimports = collect_all(package_name)
+    datas.extend(package_datas)
+    binaries.extend(package_binaries)
+    hiddenimports.extend(package_hiddenimports)
+
+analysis = Analysis(
+    [str(entry_point)],
+    pathex=[str(source_root)],
+    binaries=binaries,
+    datas=datas,
+    hiddenimports=hiddenimports,
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=[],
+    noarchive=False,
+    optimize=0,
+)
+python_archive = PYZ(analysis.pure)
+
+executable = EXE(
+    python_archive,
+    analysis.scripts,
+    analysis.binaries,
+    analysis.datas,
+    [],
+    name=artifact_name()[:-4],
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=False,
+    console=False,
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+)
