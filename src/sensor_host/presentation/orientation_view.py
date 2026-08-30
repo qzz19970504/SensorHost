@@ -275,7 +275,7 @@ class AttitudeView(QFrame):
         layout = QGridLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setHorizontalSpacing(SPACE.normal)
-        layout.setVerticalSpacing(SPACE.normal)
+        layout.setVerticalSpacing(SPACE.compact)
         self.value_labels: dict[str, QLabel] = {}
         for index, (key, title, unit) in enumerate(self._FIELDS):
             row, column = divmod(index, 2)

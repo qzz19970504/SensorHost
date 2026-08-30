@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 
 from PyQt6.QtWidgets import QApplication
@@ -15,12 +16,35 @@ from sensor_host.presentation import (
 from sensor_host.transport import CdcSerialTransport
 
 
-def main() -> int:
-    """Create, show, and run the sensor host application."""
-    application = QApplication(sys.argv)
+SMOKE_TEST_ARGUMENT = "--smoke-test"
+OFFSCREEN_PLATFORM = "offscreen"
+
+
+def _create_application(arguments: list[str]) -> QApplication:
+    """Create or reuse the process QApplication and apply the host theme."""
+    existing_application = QApplication.instance()
+    application = (
+        existing_application
+        if isinstance(existing_application, QApplication)
+        else QApplication(arguments)
+    )
     application.setApplicationName("STM32 Sensor Host")
     load_application_fonts()
     application.setStyleSheet(dark_stylesheet())
+    return application
+
+
+def _run_smoke_test(application: QApplication) -> int:
+    """Construct and render one offscreen window without serial discovery."""
+    window = MainWindow()
+    window.show()
+    application.processEvents()
+    window.close()
+    return 0
+
+
+def _run_interactive(application: QApplication) -> int:
+    """Wire transports and controllers, then run the interactive event loop."""
     window = MainWindow()
     controller = AppController(CdcSerialTransport)
 
@@ -52,6 +76,32 @@ def main() -> int:
     refresh_devices()
     window.show()
     return application.exec()
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run the interactive host or its deterministic packaging smoke mode."""
+    arguments = list(sys.argv if argv is None else argv)
+    is_smoke_test = SMOKE_TEST_ARGUMENT in arguments[1:]
+    if is_smoke_test:
+        os.environ.setdefault("QT_QPA_PLATFORM", OFFSCREEN_PLATFORM)
+        arguments = [
+            argument for argument in arguments if argument != SMOKE_TEST_ARGUMENT
+        ]
+    existing_application = QApplication.instance()
+    original_stylesheet = (
+        existing_application.styleSheet()
+        if isinstance(existing_application, QApplication)
+        else None
+    )
+    application = _create_application(arguments)
+    if is_smoke_test:
+        try:
+            return _run_smoke_test(application)
+        finally:
+            if original_stylesheet is not None:
+                application.setStyleSheet(original_stylesheet)
+                application.processEvents()
+    return _run_interactive(application)
 
 
 if __name__ == "__main__":
