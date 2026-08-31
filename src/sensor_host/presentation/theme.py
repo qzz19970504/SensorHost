@@ -67,10 +67,9 @@ def dark_stylesheet() -> str:
         border: 0;
         border-radius: 2px;
     }}
-    QFrame[controlGroup="true"] {{
-        background: {COLORS['panel_alt']};
-        border: 1px solid {COLORS['border']};
-        border-radius: 8px;
+    QFrame[role="toolbar-divider"] {{
+        background: {COLORS['border']};
+        border: 0;
     }}
     QLabel[role="eyebrow"] {{
         color: {COLORS['cyan']};
@@ -80,6 +79,10 @@ def dark_stylesheet() -> str:
         letter-spacing: 1px;
     }}
     QLabel[role="muted"] {{ color: {COLORS['muted']}; }}
+    QLabel[role="control-label"] {{
+        color: {COLORS['text']};
+        font-size: 12px;
+    }}
     QLabel[role="metric"] {{
         color: {COLORS['text']};
         font-family: "Consolas";
@@ -127,10 +130,46 @@ def dark_stylesheet() -> str:
         padding: 0 8px;
         background: {COLORS['panel_alt']};
     }}
+    QComboBox {{ padding-right: 30px; }}
+    QComboBox::drop-down {{
+        subcontrol-origin: border;
+        subcontrol-position: top right;
+        width: 26px;
+        border: 0;
+        background: transparent;
+    }}
+    QComboBox::down-arrow {{
+        image: none;
+        width: 0;
+        height: 0;
+    }}
+    QCheckBox[role="channel-toggle"] {{
+        min-height: 24px;
+        spacing: 5px;
+        padding: 0 7px;
+        color: {COLORS['muted']};
+        border: 1px solid {COLORS['border']};
+        border-radius: 5px;
+        background: {COLORS['panel_alt']};
+    }}
+    QCheckBox[role="channel-toggle"]:checked {{
+        color: {COLORS['text']};
+    }}
+    QCheckBox[role="channel-toggle"]::indicator {{
+        width: 9px;
+        height: 9px;
+        border: 1px solid {COLORS['muted']};
+        border-radius: 2px;
+        background: transparent;
+    }}
+    QCheckBox[role="channel-toggle"]::indicator:checked {{
+        border-color: {COLORS['cyan']};
+        background: {COLORS['cyan']};
+    }}
     QTabWidget::pane {{ border: 0; }}
     QTabBar::tab {{
         color: {COLORS['muted']};
-        padding: {SPACE.normal}px {SPACE.major}px;
+        padding: {SPACE.compact}px 18px;
         border-bottom: 2px solid transparent;
         font-family: "Consolas";
         font-weight: 700;

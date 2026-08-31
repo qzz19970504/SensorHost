@@ -1,7 +1,9 @@
 import numpy as np
-from PyQt6.QtWidgets import QFrame, QLabel, QSizePolicy
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QFrame, QLabel
 
 from sensor_host.acquisition import UiSnapshot
+from sensor_host.presentation.controls import IntegratedComboBox
 from sensor_host.presentation.main_window import MainWindow
 from sensor_host.presentation.console_view import ConsoleView
 from sensor_host.presentation.diagnostics_view import DiagnosticsView
@@ -148,14 +150,15 @@ def test_balanced_spacing_tokens_are_stable() -> None:
     ) == (4, 8, 12, 16, 24)
 
 
-def test_tabs_and_pages_have_breathing_room(qtbot) -> None:
+def test_tabs_are_compact_without_crowding_live_content(qtbot) -> None:
     window = MainWindow()
     qtbot.addWidget(window)
     margins = window.live_tab.layout().contentsMargins()
 
-    assert margins.top() == SPACE.section
+    assert window.tabs.tabBar().height() == 38
+    assert margins.top() == SPACE.compact
     assert window.live_tab.layout().spacing() == SPACE.normal
-    assert "padding: 12px 24px" in dark_stylesheet()
+    assert "padding: 8px 18px" in dark_stylesheet()
 
 
 def test_card_and_metric_spacing_is_balanced(qtbot) -> None:
@@ -198,7 +201,7 @@ def test_live_cards_use_article_style_titles_and_accents(qtbot) -> None:
     assert all(accent.minimumHeight() == 20 for accent in title_accents)
 
 
-def test_acquisition_toolbar_groups_controls_without_compression(qtbot) -> None:
+def test_acquisition_toolbar_is_flat_and_vertically_centered(qtbot) -> None:
     window = MainWindow()
     qtbot.addWidget(window)
     window.resize(1080, 700)
@@ -211,14 +214,53 @@ def test_acquisition_toolbar_groups_controls_without_compression(qtbot) -> None:
         if frame.property("controlGroup") is True
     ]
 
-    assert len(groups) == 3
-    assert all(
-        group.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Fixed
-        for group in groups
+    assert groups == []
+    assert (
+        window.acquisition_toolbar.layout().alignment()
+        & Qt.AlignmentFlag.AlignVCenter
     )
+    assert window.app_header.layout().alignment() & Qt.AlignmentFlag.AlignVCenter
     assert window.window_combo.minimumWidth() >= 72
     assert window.watermark_combo.minimumWidth() >= 72
-    assert all(group.width() >= group.minimumSizeHint().width() for group in groups)
+
+
+def test_vibration_actions_live_in_card_header(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    actions = window.vibration_view.header_actions
+
+    assert actions.property("role") == "card-actions"
+    assert actions.parentWidget().property("role") == "card-header"
+    assert window.vibration_view.layout().indexOf(actions) == -1
+    assert actions.layout().indexOf(window.vibration_view.x_toggle) >= 0
+    assert actions.layout().indexOf(window.vibration_view.auto_y_button) >= 0
+    assert all(
+        toggle.property("role") == "channel-toggle"
+        for toggle in (
+            window.vibration_view.x_toggle,
+            window.vibration_view.y_toggle,
+            window.vibration_view.z_toggle,
+        )
+    )
+
+
+def test_combo_boxes_use_integrated_painted_chevron(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    combos = (
+        window.device_combo,
+        window.window_combo,
+        window.watermark_combo,
+    )
+
+    assert all(isinstance(combo, IntegratedComboBox) for combo in combos)
+    assert all(len(combo.arrow_points()) == 3 for combo in combos)
+    assert all(
+        max(point.x() for point in combo.arrow_points()) < combo.width()
+        for combo in combos
+    )
 
 
 def test_vibration_pause_badge_only_appears_while_paused(qtbot) -> None:
@@ -301,8 +343,17 @@ def test_theme_defines_transparent_labels_and_structured_card_roles() -> None:
     assert "QLabel {" in stylesheet
     assert "background: transparent" in stylesheet
     assert 'QLabel[role="card-title"]' in stylesheet
-    assert 'QFrame[controlGroup="true"]' in stylesheet
     assert 'QFrame[role="title-accent"]' in stylesheet
+
+
+def test_theme_integrates_combo_arrow_into_rounded_input() -> None:
+    stylesheet = dark_stylesheet()
+
+    assert "QComboBox::drop-down" in stylesheet
+    assert "background: transparent" in stylesheet
+    assert "border: 0" in stylesheet
+    assert "QComboBox::down-arrow" in stylesheet
+    assert 'QCheckBox[role="channel-toggle"]' in stylesheet
 
 
 def test_console_and_diagnostics_pages_use_section_padding(qtbot) -> None:

@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -30,8 +31,15 @@ class VibrationView(QWidget):
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(8)
 
-        controls = QHBoxLayout()
-        controls.addStretch(1)
+        self.header_actions = QWidget(self)
+        self.header_actions.setProperty("role", "card-actions")
+        self.header_actions.setSizePolicy(
+            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Fixed,
+        )
+        controls = QHBoxLayout(self.header_actions)
+        controls.setContentsMargins(0, 0, 0, 0)
+        controls.setSpacing(4)
         self.x_toggle = self._create_channel_toggle("X", True)
         self.y_toggle = self._create_channel_toggle("Y", True)
         self.z_toggle = self._create_channel_toggle("Z", True)
@@ -46,7 +54,6 @@ class VibrationView(QWidget):
         self.paused_badge.setProperty("role", "muted")
         self.paused_badge.hide()
         controls.addWidget(self.paused_badge)
-        root_layout.addLayout(controls)
 
         self.plot = pg.PlotWidget(background=COLORS["panel_alt"])
         self.plot.setLabel("bottom", "TIME", units="s")
@@ -98,6 +105,7 @@ class VibrationView(QWidget):
     @staticmethod
     def _create_channel_toggle(name: str, is_checked: bool) -> QCheckBox:
         toggle = QCheckBox(name)
+        toggle.setProperty("role", "channel-toggle")
         toggle.setChecked(is_checked)
         return toggle
 
