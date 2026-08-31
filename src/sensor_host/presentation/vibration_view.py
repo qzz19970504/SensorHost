@@ -44,6 +44,7 @@ class VibrationView(QWidget):
         controls.addWidget(self.auto_y_button)
         self.paused_badge = QLabel("")
         self.paused_badge.setProperty("role", "muted")
+        self.paused_badge.hide()
         controls.addWidget(self.paused_badge)
         root_layout.addLayout(controls)
 
@@ -83,6 +84,7 @@ class VibrationView(QWidget):
         """Freeze or resume only display updates, leaving acquisition untouched."""
         self._is_paused = is_paused
         self.paused_badge.setText("DISPLAY PAUSED" if is_paused else "")
+        self.paused_badge.setVisible(is_paused)
 
     def _create_curve(self, name: str, color: str) -> pg.PlotDataItem:
         curve = self.plot.plot(

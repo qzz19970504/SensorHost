@@ -50,6 +50,28 @@ def dark_stylesheet() -> str:
         border: 1px solid {COLORS['border']};
         border-radius: 8px;
     }}
+    QLabel {{ background: transparent; }}
+    QFrame[role="card-header"] {{
+        background: transparent;
+        border: 0;
+        border-bottom: 1px solid {COLORS['border']};
+    }}
+    QLabel[role="card-title"] {{
+        background: transparent;
+        color: {COLORS['text']};
+        font-size: 16px;
+        font-weight: 700;
+    }}
+    QFrame[role="title-accent"] {{
+        background: {COLORS['cyan']};
+        border: 0;
+        border-radius: 2px;
+    }}
+    QFrame[controlGroup="true"] {{
+        background: {COLORS['panel_alt']};
+        border: 1px solid {COLORS['border']};
+        border-radius: 8px;
+    }}
     QLabel[role="eyebrow"] {{
         color: {COLORS['cyan']};
         font-family: "Consolas";
@@ -62,6 +84,12 @@ def dark_stylesheet() -> str:
         color: {COLORS['text']};
         font-family: "Consolas";
         font-size: 16px;
+        font-weight: 700;
+    }}
+    QLabel[role="metric-compact"] {{
+        color: {COLORS['text']};
+        font-family: "Consolas";
+        font-size: 14px;
         font-weight: 700;
     }}
     QLabel[role="health-label"] {{
@@ -111,5 +139,5 @@ def dark_stylesheet() -> str:
         color: {COLORS['cyan']};
         border-bottom-color: {COLORS['cyan']};
     }}
-    QSplitter::handle {{ background: transparent; width: 6px; height: 6px; }}
+    QSplitter::handle {{ background: transparent; }}
     """
