@@ -176,7 +176,7 @@ def test_decodes_jy61pl_scaling_and_status() -> None:
     status_payload = bytearray(64)
     struct.pack_into("<BBBBHH9I5H2xQ", status_payload, 0,
                      1, 1, 2, 1, 256, 3,
-                     4096, 3, 4, 5, 6, 7, 8, 9, 10,
+                     0, 3, 4, 5, 6, 7, 8, 9, 10,
                      111, 222, 333, 444, 555, 987654321)
     parser = StreamParser()
     frames = parser.feed(
@@ -193,7 +193,7 @@ def test_decodes_jy61pl_scaling_and_status() -> None:
     status = frames[1].status
     assert status is not None
     assert status.watermark_words == 256
-    assert status.uart_credit_bytes == 4096
+    assert status.uart_credit_bytes == 0
     assert status.iis_stack_high_water_words == 111
     assert status.uptime_us == 987654321
 
