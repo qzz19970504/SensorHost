@@ -2,7 +2,7 @@
 
 ## 1. 传输模型
 
-STM32 在 CDC 或 UART2 上发送同一种二进制帧。两条链路不会同时发送采集流；默认 CDC 活跃，CLI 可请求切换。所有消息共用一个 32 位发送序号，序号在真正开始发送时写入，因此排队后被淘汰的帧不会消耗序号。
+STM32 在 CDC 或 UART2 上使用同一种二进制帧。生产默认链路是 UART2；CLI 可请求切换以进行诊断。IIS3DWB 与 JY61PL 帧先以 `sequence=0` 持久化到板载 SD NAND，在真正开始 UART 发送时才写入全局 32 位发送序号并重算 CRC。CLI_RESPONSE 与 STATUS 不进入 SD 队列，直接在命令来源链路发送。
 
 多字节整数均为小端。UART2 参数为 3 Mbaud、8N1、8 倍过采样、无 RTS/CTS。CDC 的波特率设置不影响 USB 实际传输。
 
@@ -74,7 +74,7 @@ payload 固定 64 字节、`item_count=1`：
 | 3 | u8 | acquisition_state：停止=`0`，运行=`1`，配置失败安全态=`2` |
 | 4 | u16 | watermark_words |
 | 6 | u16 | free_data_buffers |
-| 8 | u32 | uart_credit_bytes |
+| 8 | u32 | legacy_uart_credit，固定 `0`（保留 V1 二进制布局） |
 | 12 | u32 | data_queue_peak |
 | 16 | u32 | fifo_overruns |
 | 20 | u32 | source_drops |
@@ -91,7 +91,7 @@ payload 固定 64 字节、`item_count=1`：
 | 54 | u16 | reserved=`0` |
 | 56 | u64 | uptime_us |
 
-计数器饱和于 `UINT32_MAX`。`source_drops` 包括无空闲大帧、旧 IIS 排队帧被回收和 JY 小帧无法排队；`transport_drops` 包括发送切换时丢弃、发送中止及传输队列/小缓冲失败。
+计数器饱和于 `UINT32_MAX`。`source_drops` 包括无空闲帧、存储入口已满、SD 写入失败或裸扇区队列已满；`transport_drops` 包括发送切换、中止及传输队列/小缓冲失败。偏移 8 不再表示可用流控额度，接收端必须忽略其数值。
 
 ## 6. CLI_RESPONSE（type=4）
 
@@ -103,24 +103,23 @@ status
 transport cdc|uart
 acq start|stop
 acq watermark 128|256|511
-credit <1..1048576>    # 仅 UART2 控制入口
 ```
 
 解析器限制单行长度、参数个数和十进制溢出。无效命令返回 `err command <code>`，并增加 `command_errors`。回复固定走命令来源链路，以便主采集流切到 UART 时 CDC 仍可调试。
 
-## 7. UART credit 与链路切换
+## 7. SD 优先发送与链路切换
 
-UART credit 的上限为 1,048,576 字节。ESP32 发送 `credit N` 后，STM32 饱和累加；只有“走当前活跃 UART 的帧”在开始 DMA 前按完整帧字节数扣减。若 UART DMA 启动失败则原数退回。来源定向的 CLI 回复用于建立/恢复控制面，不消耗采集 credit。
+当前固件没有 UART 软件 credit，也没有 RTS/CTS。传感器帧只有在 SD 裸扇区循环队列完成写入、回读和元数据提交后，才有资格进入 UART DMA。UART DMA 成功完成后，Storage 任务回收且仅回收该 `record_id`；启动失败、DMA 错误、中止或掉电都保留记录供重试。这个完成事件不等价于 ESP32 应用层确认。
 
 切换状态机：
 
 1. `transport uart` 或 `transport cdc` 设置 pending 目标。
 2. 已开始的发送最多等待 100 ms；等待期间不启动新的活跃链路数据帧。
 3. 超时则中止当前后端并记录 drop。
-4. 切换完成时淘汰旧的 IIS 排队帧，避免在新链路发送陈旧振动数据。
+4. 切换完成时释放 RAM 中待发副本，但不回收对应 SD 记录。
 5. 在目标链路排队 STATUS；命令回复仍返回命令来源。
 
-CDC 是启动默认值。UART credit 耗尽不会停止传感器：采集继续，旧 IIS 帧按策略被覆盖/丢弃并在 STATUS 与 IIS flags 中体现。
+UART 是启动默认值。选择 CDC 时，传感器采集和落盘继续，但 SD 记录不会通过 CDC 排空；切回 UART 后从最旧记录重试。队列已满时丢弃新传感器帧，不覆盖尚未发送的旧记录。
 
 ## 8. 接收端重同步
 
@@ -171,33 +170,22 @@ assert [frame.sequence for frame in frames] == [1, 2, 3, 4]
 
 完整的 ESP32 模块边界、状态机、PSRAM 所有权、故障恢复和验收要求见 [ESP32_GATEWAY_REQUIREMENTS.md](./ESP32_GATEWAY_REQUIREMENTS.md)。本节只提供协议级参考，若两者对线缆字节定义的描述不一致，以本文前 9 节为准。
 
-ESP32 应把 UART 字节视为透明 SDF1 流，先写 PSRAM 环形缓冲，再由网络/存储消费者释放空间。不要按 UART read 边界假设帧边界。
+ESP32 应把 UART 字节视为透明 SDF1 流，先写 PSRAM 环形缓冲，再由网络/存储消费者释放空间。不要按 UART read 边界假设帧边界。STM32 不等待 ESP32 确认，因此 ESP32 必须持续提供足够的 RX 服务能力，并显式报告本地溢出。
 
 ```text
 on_boot:
     uart_config(3_000_000, 8N1, no_rts_cts)
     parser.reset()
-    free_reported = 0
 
 loop:
     bytes = uart_read()
     accepted = psram_ring.write_without_overwrite(bytes)
     parser.feed_for_crc_and_metrics(bytes[0:accepted])
+    if accepted != len(bytes):
+        record_rx_overflow(len(bytes) - accepted)
 
-    newly_free = psram_ring.free_space() - free_reported
-    if newly_free >= CREDIT_GRANULARITY:
-        uart_write("credit " + newly_free + "\r\n")
-        free_reported += newly_free
-
-    when consumer_commits(n):
-        psram_ring.release(n)
-        free_reported -= min(free_reported, n)
+when consumer_commits(n):
+    psram_ring.release(n)
 ```
 
-credit 必须代表真实可写空间，不能按已接收字节盲目返还。
-
-### 10.1 当前 credit 会话限制
-
-当前 V1 只实现 `credit N` 的饱和累加，没有撤销或原子替换剩余 credit 的命令。若 ESP32 独立复位而 STM32 未复位，STM32 可能仍持有旧授权；ESP32 不能把新的空闲 PSRAM 直接再次全量授权，否则会重复计算空间。
-
-因此当前安全实验条件是 STM32 与 ESP32 同步复位。UART 生产验收前，控制面需要增加仅 UART 来源可用、在发送帧边界把剩余 credit 清零的 `credit reset` 或等价版本化能力。该命令尚未在当前固件实现，不能由 ESP32 用延时或本地清空伪装。
+PSRAM 满时不能通过命令暂停 STM32；首版应把容量和消费者吞吐设计为能承受最长业务阻塞时间。若业务需要可证明的端到端不丢失或可控背压，必须在后续协议中增加接收确认/窗口机制，不能把 UART DMA 完成当作对端确认。
