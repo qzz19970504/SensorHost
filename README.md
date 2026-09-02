@@ -79,7 +79,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\package_host.ps1
 3. `LIVE MONITOR` 查看三轴波形、姿态和健康栏。
 4. `PAUSE` 只冻结显示；采集和原始录制继续。
 5. `DIAGNOSTICS` 查看 parser、host 和完整 STATUS 计数。
-6. `CONSOLE` 可发送 `status`、`acq start`、`acq stop`、`acq watermark 128|256|511`。
+6. `CONSOLE` 可发送 `AT+STATE?`、`AT+START`、`AT+STOP`；watermark 暂保留兼容命令 `acq watermark 128|256|511`。
 7. 结束前点 `DISCONNECT`，程序也会在退出时请求采集线程自然停止。
 
 当前 GUI 不提供 UART/ESP32 链路切换控件。ESP32 固件和上行 transport adapter 尚未实现、也未经硬件验证；交接约束见 [`docs/ESP32_GATEWAY_REQUIREMENTS.md`](../docs/ESP32_GATEWAY_REQUIREMENTS.md)。
@@ -131,6 +131,16 @@ host/
 watermark 越小，中断/批次频率越高、单批延迟通常越低；watermark 越大，CPU/DMA 调度次数较少但单批延迟更高。
 
 ## CDC hardware acceptance
+
+生产双路验收先列出串口，再同时采集 UART2 与 STM32 CDC。工具只通过 CDC
+发送 AT 命令，不发送 ACK，并输出 JSON 与两份原始 `.sdf1`：
+
+```powershell
+python .\host\tools\dual_output_acceptance.py --list-ports
+python .\host\tools\dual_output_acceptance.py --cdc-port COM5 --uart-port COM8 --uart-baud 115200 --duration 30 --output .\host\tests\golden\hardware\dual-output.json
+```
+
+共同传感器序号必须字节内容一致；CDC 始终连接时，UART-only 序号视为镜像丢失。
 
 合并前的最终门禁不是“窗口能打开”，而是 CDC 端到端持续验证。连接硬件后应完成：
 
