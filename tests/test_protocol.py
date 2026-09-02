@@ -5,6 +5,7 @@ import random
 import struct
 import sys
 import zlib
+import uuid
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ sys.path.insert(0, str(HOST_SOURCE))
 
 from protocol import (
     HEADER_SIZE,
+    DATA_HEADER_SIZE,
     MAX_PAYLOAD_SIZE,
     MessageType,
     StreamParser,
@@ -34,6 +36,7 @@ def encode_frame(
     version: int = 1,
     header_size: int = HEADER_SIZE,
     payload_size: int | None = None,
+    device_uuid: uuid.UUID | None = None,
 ) -> bytes:
     declared_size = len(payload) if payload_size is None else payload_size
     header = struct.pack(
@@ -49,7 +52,8 @@ def encode_frame(
         item_count,
         0,
     )
-    body = header + payload
+    extension = device_uuid.bytes if device_uuid is not None else b""
+    body = header + extension + payload
     return body + struct.pack("<I", zlib.crc32(body) & 0xFFFFFFFF)
 
 
@@ -76,6 +80,9 @@ def test_parses_golden_with_fixed_chunks(golden, chunk_size: int) -> None:
     assert [frame.sequence for frame in frames] == [1, 2, 3, 4]
     assert parser.stats.frames == 4
     assert parser.stats.sequence_gaps == 0
+    assert frames[0].device_uuid == uuid.UUID("00112233-4455-6677-8899-aabbccddeeff")
+    assert frames[1].device_uuid == frames[0].device_uuid
+    assert frames[2].device_uuid is None
 
 
 def test_random_chunks_and_concatenated_frames(golden) -> None:
@@ -159,7 +166,7 @@ def test_skips_crc_valid_future_version_as_one_bounded_frame() -> None:
         MessageType.CLI_RESPONSE,
         20,
         future_payload,
-        version=2,
+        version=3,
     )
     current = encode_frame(MessageType.CLI_RESPONSE, 21, b"current")
 
@@ -173,7 +180,7 @@ def test_skips_crc_valid_future_version_as_one_bounded_frame() -> None:
 
 def test_future_version_still_requires_valid_crc() -> None:
     future = bytearray(
-        encode_frame(MessageType.CLI_RESPONSE, 30, b"SDF1", version=2)
+        encode_frame(MessageType.CLI_RESPONSE, 30, b"SDF1", version=3)
     )
     future[-1] ^= 0x80
     parser = StreamParser()
@@ -182,6 +189,43 @@ def test_future_version_still_requires_valid_crc() -> None:
 
     assert parser.stats.unknown_versions == 0
     assert parser.stats.crc_errors == 1
+
+
+def test_decodes_v2_sensor_uuid_and_archive_flag_without_stripping_payload() -> None:
+    expected_uuid = uuid.UUID("550e8400-e29b-41d4-a716-446655440000")
+    payload = bytes(range(14))
+    frame = encode_frame(
+        MessageType.IIS3DWB_FIFO,
+        77,
+        payload,
+        flags=0x8002,
+        item_count=2,
+        version=2,
+        header_size=DATA_HEADER_SIZE,
+        device_uuid=expected_uuid,
+    )
+
+    decoded = StreamParser().feed(frame)[0]
+
+    assert decoded.device_uuid == expected_uuid
+    assert decoded.archive_export
+    assert decoded.payload == payload
+
+
+@pytest.mark.parametrize("message_type", [MessageType.STATUS, MessageType.CLI_RESPONSE])
+def test_rejects_v2_control_frames(message_type: MessageType) -> None:
+    frame = encode_frame(
+        message_type,
+        1,
+        bytes(64) if message_type is MessageType.STATUS else b"OK\r\n",
+        version=2,
+        header_size=DATA_HEADER_SIZE,
+        device_uuid=uuid.UUID(int=0),
+    )
+    parser = StreamParser()
+
+    assert parser.feed(frame) == []
+    assert parser.stats.header_errors == 1
 
 
 def test_decodes_jy61pl_scaling_and_status() -> None:

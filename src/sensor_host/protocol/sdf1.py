@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import struct
+import uuid
 import zlib
 from dataclasses import dataclass
 from enum import IntEnum
@@ -11,6 +12,8 @@ from enum import IntEnum
 MAGIC = b"SDF1"
 VERSION = 1
 HEADER_SIZE = 28
+DATA_VERSION = 2
+DATA_HEADER_SIZE = 44
 MAX_HEADER_SIZE = 256
 CRC_SIZE = 4
 MAX_PAYLOAD_SIZE = 3577
@@ -102,11 +105,16 @@ class Frame:
     timestamp_us: int
     item_count: int
     payload: bytes
+    device_uuid: uuid.UUID | None = None
     iis_words: tuple[IisFifoWord, ...] | None = None
     iis_samples: tuple[IisSample, ...] | None = None
     jy61pl: Jy61plSample | None = None
     status: StatusV1 | None = None
     cli_text: str | None = None
+
+    @property
+    def archive_export(self) -> bool:
+        return bool(self.flags & 0x8000)
 
 
 def decode_iis_words(payload: bytes) -> tuple[IisFifoWord, ...]:
@@ -319,6 +327,11 @@ class StreamParser:
                 self.stats.header_errors += 1
                 self.stats.bytes_discarded += 1
                 continue
+            if version == DATA_VERSION and header_size != DATA_HEADER_SIZE:
+                del self._buffer[0]
+                self.stats.header_errors += 1
+                self.stats.bytes_discarded += 1
+                continue
             if payload_size > MAX_PAYLOAD_SIZE:
                 del self._buffer[0]
                 self.stats.length_errors += 1
@@ -336,7 +349,7 @@ class StreamParser:
                 self.stats.bytes_discarded += 1
                 continue
             del self._buffer[:frame_size]
-            if version != VERSION:
+            if version not in (VERSION, DATA_VERSION):
                 self.stats.unknown_versions += 1
                 continue
             try:
@@ -344,9 +357,26 @@ class StreamParser:
             except ValueError:
                 self.stats.unknown_types += 1
                 continue
+            if version == DATA_VERSION and message_type not in (
+                MessageType.IIS3DWB_FIFO,
+                MessageType.JY61PL_SAMPLE,
+            ):
+                self.stats.header_errors += 1
+                continue
             payload = candidate[header_size:-CRC_SIZE]
+            device_uuid = (
+                uuid.UUID(bytes=candidate[HEADER_SIZE:DATA_HEADER_SIZE])
+                if version == DATA_VERSION
+                else None
+            )
             frame = self._decode_frame(
-                message_type, flags, sequence, timestamp_us, item_count, payload
+                message_type,
+                flags,
+                sequence,
+                timestamp_us,
+                item_count,
+                payload,
+                device_uuid,
             )
             if frame is not None:
                 if message_type in (
@@ -366,6 +396,7 @@ class StreamParser:
         timestamp_us: int,
         item_count: int,
         payload: bytes,
+        device_uuid: uuid.UUID | None,
     ) -> Frame | None:
         common = dict(
             message_type=message_type,
@@ -374,6 +405,7 @@ class StreamParser:
             timestamp_us=timestamp_us,
             item_count=item_count,
             payload=payload,
+            device_uuid=device_uuid,
         )
         if message_type is MessageType.IIS3DWB_FIFO:
             if len(payload) != item_count * IIS_WORD_SIZE:
