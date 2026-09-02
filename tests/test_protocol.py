@@ -129,11 +129,24 @@ def test_rejects_bad_header_oversize_and_unknown_type(golden) -> None:
     assert parser.stats.unknown_types == 1
 
 
-def test_counts_sequence_gap() -> None:
+def test_control_frames_do_not_advance_sensor_sequence() -> None:
     parser = StreamParser()
     stream = (
-        encode_frame(MessageType.CLI_RESPONSE, 10, b"a")
-        + encode_frame(MessageType.CLI_RESPONSE, 13, b"b")
+        encode_frame(MessageType.IIS3DWB_FIFO, 10, bytes(7))
+        + encode_frame(MessageType.CLI_RESPONSE, 0, b"OK\r\n")
+        + encode_frame(MessageType.STATUS, 0, bytes(64))
+        + encode_frame(MessageType.JY61PL_SAMPLE, 11, bytes(14))
+    )
+    assert len(parser.feed(stream)) == 4
+    assert parser.stats.sequence_gaps == 0
+    assert parser.last_sequence == 11
+
+
+def test_counts_sensor_sequence_gap() -> None:
+    parser = StreamParser()
+    stream = (
+        encode_frame(MessageType.IIS3DWB_FIFO, 10, bytes(7))
+        + encode_frame(MessageType.JY61PL_SAMPLE, 13, bytes(14))
     )
     assert len(parser.feed(stream)) == 2
     assert parser.stats.sequence_gaps == 2

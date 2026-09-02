@@ -18,7 +18,7 @@
 - UART DMA 启动失败、错误或中止：SD 尾记录不回收，稍后重试。
 - UART DMA 成功：STM32 回收该 SD 记录。
 - CLI_RESPONSE 与 STATUS 不经过 SD，始终返回命令来源链路。
-- `transport cdc` 可用于诊断，但传感器 SD 记录不会因 CDC 发送而回收；`transport uart` 后继续排空。
+- 传感器流固定由 UART2 权威排空；CDC 仅作 STM32 本地尽力镜像，`transport cdc|uart` 不再受支持。
 
 重要限制：UART DMA 成功只证明字节已离开 STM32 外设，不能证明 ESP32 已写入 PSRAM 或完成上行业务。因此本版本是“STM32 本地断线缓冲”，不是端到端确认交付协议。
 
@@ -92,7 +92,7 @@ RESYNCING/OVERFLOWED/DEGRADED -> STREAMING after explicit recovery criteria
 3. 立即开始持续接收；不发送 credit，也不要求 STM32/ESP32 同步复位。
 4. 第一个 CRC 正确的 SDF1 帧建立 sequence 基线。
 
-ESP32 可发送 `status` 查询诊断，或在维护期间使用 `transport cdc|uart`，但这些命令不是接收会话建立的前置条件。
+ESP32 可发送 `AT+STATE?` 查询诊断；接收会话不依赖命令、ACK 或双方同步复位。
 
 ### 5.2 Streaming
 

@@ -50,3 +50,14 @@ def test_watermark_rejects_values_not_supported_by_firmware(
 
     with pytest.raises(ValueError, match="128, 256 or 511"):
         controller.set_watermark(watermark)
+
+
+def test_start_and_stop_use_official_at_commands() -> None:
+    transport = FakeTransport([])
+    controller = AcquisitionController(transport, RealtimeSampleStore())
+    controller.start_acquisition()
+    controller.stop_acquisition()
+
+    controller._send_pending_commands()
+
+    assert transport.commands == [b"AT+START", b"AT+STOP"]

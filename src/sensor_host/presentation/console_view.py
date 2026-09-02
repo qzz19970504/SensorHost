@@ -30,7 +30,7 @@ class ConsoleView(QWidget):
         input_row = QHBoxLayout()
         input_row.setSpacing(SPACE.compact)
         self.command_input = QLineEdit()
-        self.command_input.setPlaceholderText("status | acq start | acq stop | acq watermark 256")
+        self.command_input.setPlaceholderText("AT+STATE? | AT+START | AT+STOP | acq watermark 256")
         self.send_button = QPushButton("SEND")
         input_row.addWidget(self.command_input, stretch=1)
         input_row.addWidget(self.send_button)

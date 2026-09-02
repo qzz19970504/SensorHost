@@ -2,9 +2,9 @@
 
 ## 1. 传输模型
 
-STM32 在 CDC 或 UART2 上使用同一种二进制帧。生产默认链路是 UART2；CLI 可请求切换以进行诊断。IIS3DWB 与 JY61PL 帧先以 `sequence=0` 持久化到板载 SD NAND，在真正开始 UART 发送时才写入全局 32 位发送序号并重算 CRC。CLI_RESPONSE 与 STATUS 不进入 SD 队列，直接在命令来源链路发送。
+STM32 在 CDC 与 UART2 上使用同一种二进制帧。IIS3DWB 与 JY61P 帧在写入固定 4 KiB `SDB2` chunk 前分配传感器序号并重算 CRC。UART2 是权威排空链路；CDC 空闲且健康时镜像同一完整帧，CDC 忙或断开不阻塞 UART，也不影响 SD 回收。CLI_RESPONSE 与 STATUS 不进入 SD 队列，只返回命令来源链路。
 
-多字节整数均为小端。UART2 参数为 3 Mbaud、8N1、8 倍过采样、无 RTS/CTS。CDC 的波特率设置不影响 USB 实际传输。
+多字节整数均为小端。UART2 上电默认 115200、8N1、无 RTS/CTS，可在 IDLE 持久化设置 9600～3000000；2/3 Mbaud 适合高吞吐排空。CDC 的波特率设置不影响 USB 实际传输。
 
 ## 2. 公共帧
 
@@ -98,28 +98,23 @@ payload 固定 64 字节、`item_count=1`：
 payload 是 UTF-8 文本，通常以 `\r\n` 结尾。CLI 输入本身不是 SDF1 帧，而是发送到任一控制入口的行文本：
 
 ```text
-help
-status
-transport cdc|uart
-acq start|stop
+AT
+AT+START
+AT+STOP
+AT+STATE?
+AT+BAUD?
+AT+BAUD=<9600..3000000>
+AT+SDCLEAR=CONFIRM
 acq watermark 128|256|511
 ```
 
-解析器限制单行长度、参数个数和十进制溢出。无效命令返回 `err command <code>`，并增加 `command_errors`。回复固定走命令来源链路，以便主采集流切到 UART 时 CDC 仍可调试。
+解析器限制单行长度、参数个数和十进制溢出。错误返回 `ERROR:<reason>` 并增加 `command_errors`。回复固定走命令来源链路。`acq start|stop`、`status` 和 watermark 作为兼容别名保留；`transport cdc|uart` 返回 `ERROR:UNSUPPORTED`。
 
-## 7. SD 优先发送与链路切换
+## 7. SD 持久 FIFO 与双路输出
 
-当前固件没有 UART 软件 credit，也没有 RTS/CTS。传感器帧只有在 SD 裸扇区循环队列完成写入、回读和元数据提交后，才有资格进入 UART DMA。UART DMA 成功完成后，Storage 任务回收且仅回收该 `record_id`；启动失败、DMA 错误、中止或掉电都保留记录供重试。这个完成事件不等价于 ESP32 应用层确认。
+当前固件没有 ACK、UART 软件 credit 或 RTS/CTS。传感器帧只有在 4096 字节 chunk 和超级块提交成功后才进入 UART DMA。chunk 内所有帧逐一收到 UART DMA 完成后才整体回收；启动失败、DMA 错误、中止或掉电均保留供重试。完成事件只证明字节离开 STM32，不等价于 PC/ESP32 应用层持久化确认。
 
-切换状态机：
-
-1. `transport uart` 或 `transport cdc` 设置 pending 目标。
-2. 已开始的发送最多等待 100 ms；等待期间不启动新的活跃链路数据帧。
-3. 超时则中止当前后端并记录 drop。
-4. 切换完成时释放 RAM 中待发副本，但不回收对应 SD 记录。
-5. 在目标链路排队 STATUS；命令回复仍返回命令来源。
-
-UART 是启动默认值。选择 CDC 时，传感器采集和落盘继续，但 SD 记录不会通过 CDC 排空；切回 UART 后从最旧记录重试。队列已满时丢弃新传感器帧，不覆盖尚未发送的旧记录。
+设备上电为 IDLE；`AT+START` 进入 ACQUIRE 并同时排空历史积压，`AT+STOP` 停止新采集、封存当前 chunk、进入 DRAIN，排空后回到 IDLE。队列满时停止采集并进入 DRAIN，绝不覆盖最旧未发 chunk。SD V2 使用 block 0/1 交替超级块，block 2～7 保留，block 8 起为 8 sector/4096 字节环形 chunk。旧 V1 或非空无效介质不会自动覆盖，须显式执行 `AT+SDCLEAR=CONFIRM`。
 
 ## 8. 接收端重同步
 
@@ -130,7 +125,7 @@ UART 是启动默认值。选择 CDC 时，传感器采集和落盘继续，但 
 3. 等待 `header_size + payload_size + 4` 字节。
 4. CRC 错误时从候选首字节后重搜，不按错误长度盲跳。
 5. CRC 正确后再解释 version/type；未知 version 或 type 都计数并按已验证的完整长度跳过，payload 内出现 `SDF1` 不会造成误锁定。
-6. 用全局 sequence 统计缺口，处理 `0xFFFFFFFF -> 0` 回绕。
+6. 只用 IIS/JY 传感器帧的 sequence 统计缺口并处理回绕；CLI/STATUS 不推进基线。
 
 仓库中的 `test/protocol.py` 是参考实现。
 

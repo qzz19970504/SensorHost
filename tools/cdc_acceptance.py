@@ -48,7 +48,8 @@ def _warm_up(
 ) -> StatusV1:
     parser = StreamParser()
     latest_status = None
-    transport.write_control(b"acq start")
+    transport.write_control(b"AT+START")
+    transport.write_control(b"AT+STATE?")
     transport.write_control(b"status")
     deadline = time.monotonic() + duration_s
     next_status_s = time.monotonic() + min(_STATUS_INTERVAL_S, duration_s)
@@ -189,6 +190,10 @@ def run_acceptance(
     finally:
         if recorder_active:
             recorder.stop()
+        try:
+            transport.write_control(b"AT+STOP")
+        except (OSError, RuntimeError):
+            pass
         transport.close()
 
 

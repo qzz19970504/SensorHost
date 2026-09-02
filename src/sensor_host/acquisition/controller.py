@@ -67,11 +67,11 @@ class AcquisitionController:
 
     def start_acquisition(self) -> None:
         """Queue the firmware acquisition-start command."""
-        self.enqueue_command("acq start")
+        self.enqueue_command("AT+START")
 
     def stop_acquisition(self) -> None:
         """Queue the firmware acquisition-stop command."""
-        self.enqueue_command("acq stop")
+        self.enqueue_command("AT+STOP")
 
     def set_watermark(self, words: int) -> None:
         """Queue one of the watermark values implemented by the firmware."""
@@ -81,7 +81,7 @@ class AcquisitionController:
 
     def request_status(self) -> None:
         """Queue a firmware status request."""
-        self.enqueue_command("status")
+        self.enqueue_command("AT+STATE?")
 
     def set_recorder(self, recorder: RawSessionRecorder | None) -> None:
         """Attach or detach an already-started recorder at a chunk boundary."""

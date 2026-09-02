@@ -336,7 +336,6 @@ class StreamParser:
                 self.stats.bytes_discarded += 1
                 continue
             del self._buffer[:frame_size]
-            self._record_sequence(sequence)
             if version != VERSION:
                 self.stats.unknown_versions += 1
                 continue
@@ -350,6 +349,11 @@ class StreamParser:
                 message_type, flags, sequence, timestamp_us, item_count, payload
             )
             if frame is not None:
+                if message_type in (
+                    MessageType.IIS3DWB_FIFO,
+                    MessageType.JY61PL_SAMPLE,
+                ):
+                    self._record_sequence(sequence)
                 frames.append(frame)
                 self.stats.frames += 1
         return frames

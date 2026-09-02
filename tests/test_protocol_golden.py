@@ -20,6 +20,7 @@ def test_shared_golden_stream_decodes_in_one_byte_chunks() -> None:
     ]
     assert [frame.sequence for frame in frames] == [1, 2, 3, 4]
     assert parser.stats.crc_errors == 0
+    assert parser.last_sequence == 2
 
 
 def test_reset_session_clears_sequence_baseline_and_partial_bytes() -> None:
