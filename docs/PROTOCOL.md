@@ -89,8 +89,8 @@ payload 固定 64 字节、`item_count=1`：
 | 20 | u32 | source_drops |
 | 24 | u32 | transport_drops |
 | 28 | u32 | spi_dma_errors |
-| 32 | u32 | uart_dma_errors（UART1+UART2） |
-| 36 | u32 | cdc_errors/busy 次数 |
+| 32 | u32 | uart_dma_errors：UART2 发送 DMA 错误（core）+ App_Jy61pl UART DMA + Control UART RX 错误 |
+| 36 | u32 | cdc_errors：CDC 后端发送启动失败（cdc_start_failures）次数 |
 | 40 | u32 | command_errors |
 | 44 | u16 | IIS 任务最小剩余栈，word |
 | 46 | u16 | Transport 任务最小剩余栈，word |
@@ -100,7 +100,7 @@ payload 固定 64 字节、`item_count=1`：
 | 54 | u16 | reserved=`0` |
 | 56 | u64 | uptime_us |
 
-计数器饱和于 `UINT32_MAX`。`source_drops` 包括无空闲帧、存储入口已满、SD 写入失败或裸扇区队列已满；`transport_drops`（偏移 24）保持 V1 兼容语义，只统计物理传输侧的发送切换、中止及传输队列/小缓冲失败，正常实时运行不因丢旧保新淘汰或 STOP quiesce 丢弃待发副本而自增——这两类实时丢弃按数据源计入 `+LIVE` 行的 `DROPS_IIS`/`DROPS_JY`。因此正常负载下 `transport_drops` 的验收增量应为 0。偏移 8 不再表示可用流控额度，接收端必须忽略其数值。
+计数器饱和于 `UINT32_MAX`。`source_drops`（偏移 20）包括无空闲帧、存储入口已满、SD 写入失败或裸扇区队列已满。`transport_drops`（偏移 24）= `uart_start_failures` + `cdc_start_failures`（饱和加），即 UART 后端启动失败 + CDC 后端启动失败；不含 `uart_dma_errors`（专属偏移 32，避免与偏移 24 双重计数），也不含实时丢旧保新与 STOP quiesce 丢弃（这两类按数据源计入 `+LIVE` 行的 `DROPS_IIS`/`DROPS_JY`）；正常负载且链路可用时增量为 0；`AT+LIVESTREAM=CDC` 而 CDC 未连接时会持续增长，属预期诊断信号。`uart_dma_errors`（偏移 32）= UART2 发送 DMA 错误（core）+ App_Jy61pl UART DMA 错误 + Control UART RX 错误，是 UART 目标实时验收 `physical_tx_error_delta` 门限的字段来源。`cdc_errors`（偏移 36）= CDC 后端发送启动失败（`cdc_start_failures`），是 CDC 目标实时验收 `physical_tx_error_delta` 门限的字段来源；自本轮固件起真正赋值，不再恒 0。偏移 8 不再表示可用流控额度，接收端必须忽略其数值。
 
 ## 6. CLI_RESPONSE（type=4）
 
@@ -122,7 +122,7 @@ AT+SDCLEAR=CONFIRM
 acq watermark 128|256|511
 ```
 
-解析器限制单行长度、参数个数和十进制溢出。错误返回 `ERROR:<reason>` 并增加 `command_errors`。回复固定走命令来源链路。`acq start|stop`、`status` 和 watermark 作为兼容别名保留；`transport cdc|uart` 返回 `ERROR:UNSUPPORTED`。
+解析器限制单行长度、参数个数和十进制溢出。错误返回 `ERROR:<reason>` 并增加 `command_errors`。回复固定走命令来源链路。`acq start|stop`、`status` 和 watermark 作为兼容别名保留；`transport cdc|uart` 返回 `ERROR:UNSUPPORTED`。状态查询（`AT+STATE?`）的发送降级分两类：格式化超出 CLI 预算返回 `ERROR:RESPONSE_TOO_LARGE`；控制缓冲池耗尽返回 `ERROR:TX_BUSY`（计 `command_errors`）。两者均为可诊断错误，主机应退避重试而非笼统失败。
 
 ### 6.1 AT+LIVESTREAM
 
@@ -134,6 +134,9 @@ acq watermark 128|256|511
 - 非 IDLE 且目标与当前不同：`ERROR:STATE`
 - 非 IDLE 且目标与当前相同：幂等 `OK`
 - 无效目标（非 UART/CDC、非大写）：`ERROR:ARGUMENT`
+- IDLE 但仍有在途实时传输：`ERROR:BUSY`（瞬态；主机应退避后有限次重试，不得立即当致命错误抛 `RuntimeError`）
+- 状态响应格式化超出 CLI 预算：`ERROR:RESPONSE_TOO_LARGE`（主机以 `ValueError` 结构化诊断）
+- 控制缓冲池耗尽/发送降级：`ERROR:TX_BUSY`（瞬态，计 `command_errors`；主机与 `ERROR:BUSY` 同等退避重试，不落入笼统 `RuntimeError`/`TimeoutError`）
 
 冷启动默认 UART，设置不持久化（掉电后恢复 UART）。实时副本只发送到选定目标；非目标链路仍收发 AT 控制响应，但不接收主动传感器帧。CDC 被选中但主机未连接时，不自动回退 UART。
 
@@ -153,9 +156,11 @@ acq watermark 128|256|511
 - `LAST_COMPLETED_SEQUENCE`：Scheduler 最近完成物理发送的序号。
 - 主机按无符号 32-bit 环绕差计算滞后（routed - completed），验收要求滞后不持续 > 64 帧。
 
+`AT+STATE?` 还返回 `+STOP_REASON:<NONE|COMMAND|BUFFER_FULL|STORAGE_ERROR>` 行。其中 `BUFFER_FULL` 为历史保留值：当前固件在 SD 满时保持 `ACQUIRE` 并循环覆盖最旧 chunk（`CONTROL_EVENT_BUFFER_FULL` 分支为 no-op，不再停止采集），因此正常运行不会再产生 `BUFFER_FULL`；枚举保留仅为兼容旧记录，不要在固件侧删除。
+
 ### 6.2 实时验收门限（live-uart / live-cdc）
 
-`host/tools/realtime_archive_acceptance.py --mode live-uart|live-cdc` 使用 `LiveAcceptance` 模型判定，两种目标共享的门限为：目标链路有传感器帧、非目标链路主动传感器帧为 0、`max_sequence_lag<=64`、CRC/header/length/payload 错误为 0、物理发送错误（UART 目标看 `uart_dma_errors`、CDC 目标看 `cdc_errors`）增量为 0、`source_drop` 增量为 0、STOP→OK 耗时 ≤2 s、STOP OK 后新增主动传感器帧为 0、非目标链路 `AT`/`AT+STATE?` 探测成功。
+`host/tools/realtime_archive_acceptance.py --mode live-uart|live-cdc` 使用 `LiveAcceptance` 模型判定，两种目标共享的门限为：目标链路有传感器帧、非目标链路主动传感器帧为 0、`max_sequence_lag<=64`、CRC/header/length/payload 错误为 0、物理发送错误增量为 0（D1 字段来源：UART 目标取偏移 32 `uart_dma_errors` 增量、CDC 目标取偏移 36 `cdc_errors` 增量）、`source_drop` 增量为 0、STOP→OK 耗时 ≤2 s、STOP OK 后新增主动传感器帧为 0、非目标链路 `AT`/`AT+STATE?` 探测成功。
 
 live-drop 门限按目标区分（关键差异）：
 
