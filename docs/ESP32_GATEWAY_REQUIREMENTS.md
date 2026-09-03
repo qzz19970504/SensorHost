@@ -10,7 +10,7 @@
 
 ## 1. 当前 STM32 合同
 
-生产固件运行在 STM32F407VET6（LQFP100）。IIS3DWB 与 JY61PL 在统一分流点编码为 SDF v2（44 字节头、16 字节 UUID、全局 sequence），原始帧独立提交到板载 HHW1GS60C-B3 裸扇区循环队列；UART2 仅发送丢旧保新的实时副本或收到 `AT+EXPORT=UART` 后的历史副本。
+生产固件运行在 STM32F407VET6（LQFP100）。IIS3DWB 与 JY61PL 在统一分流点编码为 SDF v2（44 字节头、16 字节 UUID、全局 sequence），原始帧独立提交到板载 HHW1GS60C-B3 裸扇区循环队列；UART2 仅发送丢旧保新的实时副本或收到 `AT+EXPORT=UART` 后的历史副本。角色划分（与主机验收一致）：UART/CDC 实时链路只保证**实时新鲜度**（newest-wins 抽帧送达最新帧；在当前 115200 实机链路下带宽不足时大量 live-drop 与较大 sequence 滞后属物理预期、不判负），SD 存档保证**完整权威**（`source_drop=0`）；因此实时 sequence 滞后是新鲜度诊断而非硬门限，完整性以 SD 侧 `source_drop=0` 为准。
 
 - UART2：上电默认 `115200` baud（可在 IDLE 持久化至 `3_000_000`）、8N1、无 RTS/CTS。
 - STM32 启动默认实时配置：`AT+LIVESTREAM=UART`（冷启动默认）；实时副本只发送到 LIVESTREAM 选定的唯一目标。CDC 被选中但未连接时不自动回退 UART。非目标链路仍可收发 AT 控制响应。

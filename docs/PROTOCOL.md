@@ -160,16 +160,18 @@ acq watermark 128|256|511
 
 ### 6.2 实时验收门限（live-uart / live-cdc）
 
-`host/tools/realtime_archive_acceptance.py --mode live-uart|live-cdc` 使用 `LiveAcceptance` 模型判定，两种目标共享的门限为：目标链路有传感器帧、非目标链路主动传感器帧为 0、`max_sequence_lag<=64`、CRC/header/length/payload 错误为 0、物理发送错误增量为 0（D1 字段来源：UART 目标取偏移 32 `uart_dma_errors` 增量、CDC 目标取偏移 36 `cdc_errors` 增量）、`source_drop` 增量为 0、STOP→OK 耗时 ≤2 s、**STOP 的 OK 返回之后**目标与非目标链路新增主动传感器帧为 0（`post_stop_sensor_frames==0`）、非目标链路 `AT`/`AT+STATE?` 探测成功。
+`host/tools/realtime_archive_acceptance.py --mode live-uart|live-cdc` 使用 `LiveAcceptance` 模型判定，两种目标共享的**硬门限**为：目标链路有传感器帧、非目标链路主动传感器帧为 0、送达帧 CRC/header/length/payload 错误为 0、物理发送错误增量为 0（D1 字段来源：UART 目标取偏移 32 `uart_dma_errors` 增量、CDC 目标取偏移 36 `cdc_errors` 增量）、`source_drop` 增量为 0、STOP→OK 耗时 ≤2 s、**STOP 的 OK 返回之后**目标与非目标链路新增主动传感器帧为 0（`post_stop_sensor_frames==0`）、以及（适用时）非目标链路 `AT`/`AT+STATE?` 探测成功。`max_sequence_lag` 自 115200 抽帧实时模型起**不再是硬门限**，改为上报的新鲜度诊断证据（见下）。
 
 `post_stop_sensor_frames` 门限以“收到 STOP 的 OK 的时刻”为基线度量，而非以“写入 AT+STOP 之前”为基线：固件设计明确允许 STOP 时唯一在途实时帧自然完成（该帧在返回 OK 之前发完），`live_inhibited` 闩锁保证 OK 之后不再有新主动帧。因此把握手期（`AT+STOP` 写入 → 收到 OK）内完成的这条在途帧计入 `post_stop` 会导致 `post_stop>=1` 恒成立的假失败。握手窗口内出现的主动传感器帧数改由**软诊断字段** `handshake_inflight_frames`（预期 ≤1）记录到结果 JSON，仅供观测，不参与 `passed` 判定。
+
+**115200 抽帧实时模型（用户批准的需求重定义）**：实机上位机经 ESP32 网关以 115200 接收设备 UART。UART/CDC 实时链路只保证**实时新鲜度**——采用丢旧保新（newest-wins）送达最新帧，带宽不足时大量 live-drop 与较大的 routed-vs-completed 滞后属物理预期、允许且不判负；SD 存档保证**完整权威**（`source_drop=0`）。因此 `max_sequence_lag` 已从 `passed` 硬门限移除，改与送达帧率（`target_frames/duration`）一起写入结果 JSON 的 `freshness_diagnostics`，作为新鲜度证据而非门限。上述真实不变量（`source_drop=0`、送达帧协议错误为 0、物理发送错误为 0、非目标静默、STOP 双完成、OK 后零主动帧、CDC live-drop=0）仍为硬门限；不得为迁就带宽而降低采样率或隐藏 `source_drop`。
 
 live-drop 门限按目标区分（关键差异）：
 
 - **CDC 目标**：要求 `DROPS_IIS` 与 `DROPS_JY` 增量均为 0（正常负载下 CDC 无损）。
-- **UART 目标**：允许实时丢旧保新，`DROPS_IIS`/`DROPS_JY` 增量可为正而不判失败；UART 目标只由上面的共享门限（尤其 `source_drop=0`、协议/物理错误为 0、滞后 ≤64）约束。
+- **UART 目标**：允许实时丢旧保新，`DROPS_IIS`/`DROPS_JY` 增量可为正而不判失败；UART 目标只由上面的共享硬门限（尤其 `source_drop=0`、送达帧协议/物理错误为 0）约束，`max_sequence_lag` 仅作新鲜度诊断。
 
-控制与 50 ms 轮询始终经非目标链路发送（live-uart 走 CDC、live-cdc 走 UART），避免与数据链路争用污染帧统计与 live-drop。
+**控制链路与单向 UART bench**：新增 `--control-link {cdc,uart}`（默认 `cdc`）与 `--uart-host-to-device-absent`（默认 True）。当前 bench 只接了 UART 上传方向（device→host，Y+/Z-），host→device UART 物理未接，故控制与 50 ms 轮询恒走 CDC：`live-uart` 数据监听 UART、控制走 CDC、非目标 CDC 应无主动传感器帧（`nontarget_frames==0`）并照常探测其 `AT`/`AT+STATE?` 响应；`live-cdc` 数据在 CDC、控制也走 CDC（USB 带宽足够、争用可忽略）、非目标 UART 只以**监听**校验静默（`nontarget_frames==0`）。当非目标链路是 UART 且 host→device 缺失时无法向其发 `AT`，该非目标探测标记为 N/A（结果 JSON `nontarget_at_probe_applicable=false`），不因发不出而判负；接上 UART TX 后用 `--no-uart-host-to-device-absent` 恢复该探测为硬门限。UART 端由 `PortReader` 独立后台线程持续 drain，主线程轮询 CDC 不会阻塞 UART 读取，故 CRC/discard 只反映链路真实情况而非主机来不及读造成的假错。
 
 ## 7. SD 持久存档、实时分流与历史导出
 
