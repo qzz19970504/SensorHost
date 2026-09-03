@@ -160,7 +160,9 @@ acq watermark 128|256|511
 
 ### 6.2 实时验收门限（live-uart / live-cdc）
 
-`host/tools/realtime_archive_acceptance.py --mode live-uart|live-cdc` 使用 `LiveAcceptance` 模型判定，两种目标共享的门限为：目标链路有传感器帧、非目标链路主动传感器帧为 0、`max_sequence_lag<=64`、CRC/header/length/payload 错误为 0、物理发送错误增量为 0（D1 字段来源：UART 目标取偏移 32 `uart_dma_errors` 增量、CDC 目标取偏移 36 `cdc_errors` 增量）、`source_drop` 增量为 0、STOP→OK 耗时 ≤2 s、STOP OK 后新增主动传感器帧为 0、非目标链路 `AT`/`AT+STATE?` 探测成功。
+`host/tools/realtime_archive_acceptance.py --mode live-uart|live-cdc` 使用 `LiveAcceptance` 模型判定，两种目标共享的门限为：目标链路有传感器帧、非目标链路主动传感器帧为 0、`max_sequence_lag<=64`、CRC/header/length/payload 错误为 0、物理发送错误增量为 0（D1 字段来源：UART 目标取偏移 32 `uart_dma_errors` 增量、CDC 目标取偏移 36 `cdc_errors` 增量）、`source_drop` 增量为 0、STOP→OK 耗时 ≤2 s、**STOP 的 OK 返回之后**目标与非目标链路新增主动传感器帧为 0（`post_stop_sensor_frames==0`）、非目标链路 `AT`/`AT+STATE?` 探测成功。
+
+`post_stop_sensor_frames` 门限以“收到 STOP 的 OK 的时刻”为基线度量，而非以“写入 AT+STOP 之前”为基线：固件设计明确允许 STOP 时唯一在途实时帧自然完成（该帧在返回 OK 之前发完），`live_inhibited` 闩锁保证 OK 之后不再有新主动帧。因此把握手期（`AT+STOP` 写入 → 收到 OK）内完成的这条在途帧计入 `post_stop` 会导致 `post_stop>=1` 恒成立的假失败。握手窗口内出现的主动传感器帧数改由**软诊断字段** `handshake_inflight_frames`（预期 ≤1）记录到结果 JSON，仅供观测，不参与 `passed` 判定。
 
 live-drop 门限按目标区分（关键差异）：
 

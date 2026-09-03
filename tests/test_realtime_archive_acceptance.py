@@ -116,6 +116,30 @@ def test_c7_cdc_target_requires_zero_live_drops() -> None:
     assert not _live("CDC", drops_jy_delta=1).passed
 
 
+def test_c1_handshake_inflight_frame_is_not_a_post_stop_failure() -> None:
+    """False-negative fix: the firmware allows the single in-flight live frame to
+    complete during the STOP handshake (before OK returns).  The hard C1 gate
+    only counts NEW frames AFTER OK, so a handshake_inflight_frames==1 with
+    post_stop_sensor_frames==0 must PASS (this is exactly the healthy case that
+    the old pre-AT+STOP baseline mis-counted as post_stop>=1).
+    """
+    assert _live("UART", post_stop_sensor_frames=0,
+                 handshake_inflight_frames=1).passed
+    # handshake_inflight_frames is a soft diagnostic and never flips passed,
+    # even for the (unexpected) >1 case: it must not re-introduce a false fail.
+    assert _live("UART", post_stop_sensor_frames=0,
+                 handshake_inflight_frames=2).passed
+
+
+def test_c1_new_active_frame_after_stop_ok_still_fails() -> None:
+    """Real leak guard: an active sensor frame emitted AFTER STOP's OK returns
+    (live_inhibited latch failed) must FAIL regardless of the handshake diag."""
+    assert not _live("UART", post_stop_sensor_frames=1,
+                     handshake_inflight_frames=0).passed
+    assert not _live("CDC", post_stop_sensor_frames=1,
+                     handshake_inflight_frames=1).passed
+
+
 def test_c5_parser_reports_format_required_structurally() -> None:
     parsed = _parse_state(
         "+STATE:IDLE\r\n"

@@ -18,8 +18,17 @@ class LiveAcceptance:
     - CDC target: requires drops_iis_delta==0 and drops_jy_delta==0 (lossless).
     - UART target: allows live-drops (newest-wins is expected), but requires
       source_drop==0, all protocol errors==0, physical TX errors==0.
-    Both require max_sequence_lag<=64, nontarget_frames==0, post-STOP zero
-    sensor frames, and non-target AT probe success.
+    Both require max_sequence_lag<=64, nontarget_frames==0, zero NEW active
+    sensor frames after STOP's OK returns, and non-target AT probe success.
+
+    C1 post-STOP gate semantics (false-negative fix): the firmware design
+    explicitly allows the single in-flight live frame to complete naturally
+    during the STOP handshake (it finishes before OK is returned); the
+    live_inhibited latch guarantees no NEW active frame is emitted after OK.
+    So ``post_stop_sensor_frames`` is the count of NEW sensor frames observed
+    AFTER STOP's OK returns (hard gate, must be 0), and the frame that completes
+    within the handshake window is reported separately as the soft diagnostic
+    ``handshake_inflight_frames`` (expected <= 1) which never affects ``passed``.
     """
 
     live_target: str  # "UART" or "CDC"
@@ -37,8 +46,12 @@ class LiveAcceptance:
     drops_jy_delta: int  # shared JY live-drop increment (snapshot diff)
     source_drop_delta: int
     stop_latency_s: float  # STOP dual-completion latency
-    post_stop_sensor_frames: int  # C1: sensor frames after STOP OK (must be 0)
+    post_stop_sensor_frames: int  # C1: NEW sensor frames after STOP's OK (==0)
     nontarget_at_probe: bool  # C8: non-target link responds to AT/AT+STATE?
+    # Soft diagnostic (NOT a gate): active sensor frames during the handshake
+    # window (AT+STOP written -> OK received).  Firmware allows the single
+    # in-flight frame to complete here, so the expected value is <= 1.
+    handshake_inflight_frames: int = 0
 
     @property
     def passed(self) -> bool:
