@@ -35,7 +35,7 @@ Remove-Item Env:QT_QPA_PLATFORM
 
 ## What this does and does not do
 
-当前版本只通过 STM32 USB CDC 接收 SDF1，显示 IIS3DWB 三轴振动时域数据、JY61PL 姿态/加速度/温度、固件 STATUS 和解析健康指标，并支持原始数据录制与 CLI。
+当前版本通过 STM32 USB CDC 接收 SDF1，显示 IIS3DWB 三轴振动时域数据、JY61PL 姿态/加速度/温度、固件 STATUS 和解析健康指标，并支持原始数据录制、UUID/CDC_STREAM/EXPORT CLI。传感器数据使用带 UUID 的 SDF v2；控制帧仍兼容 SDF v1。
 
 姿态动画表示设备方向，不表示绝对位置。当前 JY61PL payload 也不包含原始陀螺仪和磁力计通道，因此界面不声称显示完整原始九轴数据。V1 不包含通用文件管理器、频谱、报警、云同步或 CSV 导出；CSV 在出现明确分析需求后再做离线导出。
 
@@ -79,7 +79,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\package_host.ps1
 3. `LIVE MONITOR` 查看三轴波形、姿态和健康栏。
 4. `PAUSE` 只冻结显示；采集和原始录制继续。
 5. `DIAGNOSTICS` 查看 parser、host 和完整 STATUS 计数。
-6. `CONSOLE` 可发送 `AT+STATE?`、`AT+START`、`AT+STOP`；watermark 暂保留兼容命令 `acq watermark 128|256|511`。
+6. `CONSOLE` 可发送 `AT+STATE?`、`AT+START`、`AT+STOP`、`AT+UUID?`、`AT+CDCSTREAM=ON|OFF` 和 `AT+EXPORT=UART|CDC`；watermark 暂保留兼容命令 `acq watermark 128|256|511`。CDC_STREAM 不会由主机自动开启。
 7. 结束前点 `DISCONNECT`，程序也会在退出时请求采集线程自然停止。
 
 当前 GUI 不提供 UART/ESP32 链路切换控件。ESP32 固件和上行 transport adapter 尚未实现、也未经硬件验证；交接约束见 [`docs/ESP32_GATEWAY_REQUIREMENTS.md`](../docs/ESP32_GATEWAY_REQUIREMENTS.md)。
@@ -130,17 +130,28 @@ host/
 
 watermark 越小，中断/批次频率越高、单批延迟通常越低；watermark 越大，CPU/DMA 调度次数较少但单批延迟更高。
 
-## CDC hardware acceptance
+## UART/CDC 与 SD 实机验收
 
 生产双路验收先列出串口，再同时采集 UART2 与 STM32 CDC。工具只通过 CDC
-发送 AT 命令，不发送 ACK，并输出 JSON 与两份原始 `.sdf1`：
+发送控制命令，不发送 ACK；每种模式输出 JSON 与两份原始 `.sdf1`：
 
 ```powershell
 python .\host\tools\dual_output_acceptance.py --list-ports
 python .\host\tools\dual_output_acceptance.py --cdc-port COM5 --uart-port COM8 --uart-baud 115200 --duration 30 --output .\host\tests\golden\hardware\dual-output.json
 ```
 
-共同传感器序号必须字节内容一致；CDC 始终连接时，UART-only 序号视为镜像丢失。
+```powershell
+$Python = 'C:\Users\44575\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe'
+& $Python .\host\tools\realtime_archive_acceptance.py --list-ports
+& $Python .\host\tools\realtime_archive_acceptance.py --mode preflight --cdc-port COM6 --uart-port COM12 --uart-baud 115200 --output .\build\hw-preflight.json
+& $Python .\host\tools\realtime_archive_acceptance.py --mode live --cdc-port COM6 --uart-port COM12 --uart-baud 115200 --duration 30 --output .\build\hw-live.json
+& $Python .\host\tools\realtime_archive_acceptance.py --mode overwrite --cdc-port COM6 --uart-port COM12 --uart-baud 115200 --duration 1800 --output .\build\hw-overwrite.json
+& $Python .\host\tools\realtime_archive_acceptance.py --mode export-uart --cdc-port COM6 --uart-port COM12 --uart-baud 115200 --duration 30 --output .\build\hw-export-uart.json
+& $Python .\host\tools\realtime_archive_acceptance.py --mode export-cdc --cdc-port COM6 --uart-port COM12 --uart-baud 115200 --duration 30 --output .\build\hw-export-cdc.json
+& $Python .\host\tools\realtime_archive_acceptance.py --mode interrupt-export --cdc-port COM6 --uart-port COM12 --uart-baud 115200 --duration 30 --output .\build\hw-interrupt-export.json
+```
+
+工具为 UART 和 CDC 建立独立 reader/parser，实时写出 `.uart.sdf1`、`.cdc.sdf1`，STOP 等到固件返回 OK/IDLE 及在途发送稳定后才进入下一步。覆盖模式只保留计数器，不把整个 CDC 流存入内存。导出模型要求 UUID、SDF v2 头、CRC、长度、payload、IIS/JY 类型、ARCHIVE_EXPORT 标志和 `(UUID, sequence)` 去重后无缺帧；UART/CDC 目标口不得出现交叉历史帧。中断导出允许同一 chunk 重复，但不允许缺帧。
 
 合并前的最终门禁不是“窗口能打开”，而是 CDC 端到端持续验证。连接硬件后应完成：
 

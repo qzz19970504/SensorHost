@@ -1,17 +1,19 @@
-# SDF1 V1 通讯协议
+# SDF1 V1/V2 通讯协议
 
 ## 1. 传输模型
 
-STM32 在 CDC 与 UART2 上使用同一种二进制帧。IIS3DWB 与 JY61P 帧在写入固定 4 KiB `SDB2` chunk 前分配传感器序号并重算 CRC。UART2 是权威排空链路；CDC 空闲且健康时镜像同一完整帧，CDC 忙或断开不阻塞 UART，也不影响 SD 回收。CLI_RESPONSE 与 STATUS 不进入 SD 队列，只返回命令来源链路。
+STM32 在 CDC 与 UART2 上使用同一种 SDF1 二进制帧。IIS3DWB 与 JY61P 在统一分流点分配 UUID、全局 sequence、时间戳并重算 CRC；原始 SDF v2 帧独立写入固定 4 KiB `SDB2` chunk，UART 和可选 CDC 各自接收实时副本。实时链路允许丢旧保新，拥塞只增加对应链路计数，不影响 SD 权威存档。历史帧不会随 STOP 自动发送，必须使用 `AT+EXPORT=UART|CDC` 显式上传；导出副本才设置 `ARCHIVE_EXPORT`。
 
 多字节整数均为小端。UART2 上电默认 115200、8N1、无 RTS/CTS，可在 IDLE 持久化设置 9600～3000000；2/3 Mbaud 适合高吞吐排空。CDC 的波特率设置不影响 USB 实际传输。
 
 ## 2. 公共帧
 
+控制帧（`STATUS`、`CLI_RESPONSE`）继续使用 V1 的 28 字节头。传感器帧使用 V2 的 44 字节头，在公共字段后增加 16 字节 UUID；两种版本共用 magic、CRC 和最大 payload 限制。
+
 | 偏移 | 长度 | 字段 | 定义 |
 |---:|---:|---|---|
 | 0 | 4 | magic | ASCII `SDF1` |
-| 4 | 1 | version | `1` |
+| 4 | 1 | version | `1` 控制帧，`2` 传感器帧 |
 | 5 | 1 | message_type | `1` IIS、`2` JY、`3` STATUS、`4` CLI_RESPONSE |
 | 6 | 2 | flags | 消息专用标志 |
 | 8 | 2 | header_size | 固定 `28` |
@@ -20,10 +22,11 @@ STM32 在 CDC 与 UART2 上使用同一种二进制帧。IIS3DWB 与 JY61P 帧�
 | 16 | 8 | timestamp_us | TIM2 扩展得到的 MCU 单调微秒时间；IIS 帧在 FIFO DMA 启动前取锚 |
 | 24 | 2 | item_count | payload 中逻辑项目数 |
 | 26 | 2 | reserved | 固定 `0` |
-| 28 | N | payload | 类型相关 |
+| 28 | 16 | device_uuid | 仅 V2；canonical UUID 去掉连字符后的字节顺序 |
+| 44 | N | payload | V2 传感器 payload；V1 从 28 开始 |
 | 28+N | 4 | crc32 | 覆盖 header+payload |
 
-最大帧为 `28 + 3577 + 4 = 3609` 字节。
+最大帧为 `44 + 3577 + 4 = 3625` 字节；V1 控制帧仍为 3609 字节上限。
 
 CRC 使用 CRC-32/ISO-HDLC：反射多项式 `0xEDB88320`，初值 `0xFFFFFFFF`，输入/输出反射，最终异或 `0xFFFFFFFF`。它与 Python `zlib.crc32(header + payload) & 0xFFFFFFFF` 一致。
 
@@ -61,6 +64,12 @@ payload 固定 14 字节、`item_count=1`：
 ```
 
 主机换算：加速度 `raw * 16 / 32768 g`，温度 `raw / 100 °C`，角度 `raw * 180 / 32768°`。STM32 只发送原始定点值，避免传感器任务中的浮点和字符串延迟。
+
+### 4.1 UUID、sequence 和导出标志
+
+V2 传感器头的 UUID 是 16 字节 canonical UUID 去掉连字符后的顺序，不做整数端序翻转。未配置时由 STM32 96-bit UID 加固定命名空间 `STM32-F407-SENSOR-UUID-V1` 的 CRC32 派生；`AT+UUID=<canonical-uuid>` 可在 IDLE 持久覆盖。UUID 修改不重置 sequence，SDCLEAR 后 sequence 可重新开始。CRC32 覆盖完整 V2 头和 payload。
+
+`ARCHIVE_EXPORT` 为 flags 的 bit 15。SD 中保存的原始帧不带此位；EXPORT 只在 RAM 副本上设置并重算 CRC，绝不改写 SD。
 
 ## 5. STATUS（type=3）
 
@@ -104,17 +113,24 @@ AT+STOP
 AT+STATE?
 AT+BAUD?
 AT+BAUD=<9600..3000000>
+AT+UUID?
+AT+UUID=<canonical-uuid>
+AT+CDCSTREAM?
+AT+CDCSTREAM=ON|OFF
+AT+EXPORT[=UART|CDC]
 AT+SDCLEAR=CONFIRM
 acq watermark 128|256|511
 ```
 
 解析器限制单行长度、参数个数和十进制溢出。错误返回 `ERROR:<reason>` 并增加 `command_errors`。回复固定走命令来源链路。`acq start|stop`、`status` 和 watermark 作为兼容别名保留；`transport cdc|uart` 返回 `ERROR:UNSUPPORTED`。
 
-## 7. SD 持久 FIFO 与双路输出
+## 7. SD 持久存档、实时分流与历史导出
 
-当前固件没有 ACK、UART 软件 credit 或 RTS/CTS。传感器帧只有在 4096 字节 chunk 和超级块提交成功后才进入 UART DMA。chunk 内所有帧逐一收到 UART DMA 完成后才整体回收；启动失败、DMA 错误、中止或掉电均保留供重试。完成事件只证明字节离开 STM32，不等价于 PC/ESP32 应用层持久化确认。
+当前固件没有 ACK、UART 软件 credit 或 RTS/CTS。实时 UART 使用在途帧不可覆盖的双槽丢旧保新队列；CDC_STREAM 冷启动默认为 OFF，显式开启后使用独立队列。任一实时链路启动失败、DMA 错误或拥塞只丢实时副本并累计链路计数，SD 所有权不受影响。完成事件只证明字节离开 STM32，不等价于 PC/ESP32 应用层持久化确认。
 
-设备上电为 IDLE；`AT+START` 进入 ACQUIRE 并同时排空历史积压，`AT+STOP` 停止新采集、封存当前 chunk、进入 DRAIN，排空后回到 IDLE。队列满时停止采集并进入 DRAIN，绝不覆盖最旧未发 chunk。SD V2 使用 block 0/1 交替超级块，block 2～7 保留，block 8 起为 8 sector/4096 字节环形 chunk。旧 V1 或非空无效介质不会自动覆盖，须显式执行 `AT+SDCLEAR=CONFIRM`。
+设备上电为 IDLE；`AT+START` 进入 ACQUIRE，`AT+STOP` 进入 STOPPING，等待 ingress、活动 chunk 和强制 checkpoint 完成后才回 IDLE 并回复 OK。STOP 不上传历史。SD V2 使用 block 0/1 交替超级块，block 2～7 保留，block 8 起为 8 sector/4096 字节环形 chunk。介质满时覆盖最旧 chunk，累计 `OVERWRITTEN_CHUNKS/FRAMES`，采集保持 ACQUIRE。
+
+IDLE 下 `AT+EXPORT=UART|CDC` 进入 EXPORT，从最旧 chunk 开始发送；命令来源端返回 `EXPORT_BEGIN` 和 OK，完成返回 `EXPORT_END:CHUNKS=n,FRAMES=n`，空存档返回 `EXPORT_EMPTY`。目标链路错误、START、STOP 或掉电会中止并保留当前 chunk，返回 `EXPORT_ABORTED`；重新导出从该 chunk 第一帧开始，允许最多重复一个 chunk，不能漏帧。UART 与 CDC 导出目标严格隔离，CDC 导出时 CLI_RESPONSE 可与历史帧交错。
 
 ## 8. 接收端重同步
 

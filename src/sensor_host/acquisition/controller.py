@@ -83,6 +83,29 @@ class AcquisitionController:
         """Queue a firmware status request."""
         self.enqueue_command("AT+STATE?")
 
+    def request_uuid(self) -> None:
+        """Queue a UUID and provenance query."""
+        self.enqueue_command("AT+UUID?")
+
+    def set_uuid(self, value: str) -> None:
+        """Queue a canonical UUID update; firmware enforces IDLE state."""
+        self.enqueue_command(f"AT+UUID={value}")
+
+    def request_cdc_stream(self) -> None:
+        """Queue a query for the optional CDC real-time stream."""
+        self.enqueue_command("AT+CDCSTREAM?")
+
+    def set_cdc_stream(self, enabled: bool) -> None:
+        """Enable or disable CDC real-time frames for this boot."""
+        self.enqueue_command(f"AT+CDCSTREAM={'ON' if enabled else 'OFF'}")
+
+    def export_archive(self, target: str = "UART") -> None:
+        """Start explicit archive export on UART or CDC."""
+        normalized = target.upper()
+        if normalized not in {"UART", "CDC"}:
+            raise ValueError("export target must be UART or CDC")
+        self.enqueue_command(f"AT+EXPORT={normalized}")
+
     def set_recorder(self, recorder: RawSessionRecorder | None) -> None:
         """Attach or detach an already-started recorder at a chunk boundary."""
         with self._recorder_lock:
