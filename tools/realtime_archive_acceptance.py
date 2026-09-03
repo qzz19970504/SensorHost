@@ -212,6 +212,9 @@ class AcceptanceSession:
         self.cdc_port: serial.Serial | None = None
         self.uart: PortReader | None = None
         self.cdc: PortReader | None = None
+        # S-8: sensor-frame baseline captured just before AT+STOP is written so
+        # the C1 zero-post-STOP-frame gate spans the whole STOP handshake.
+        self._post_stop_baseline: tuple[int, int] | None = None
 
     def __enter__(self) -> "AcceptanceSession":
         counters_only = self.arguments.mode == "overwrite"
@@ -244,7 +247,7 @@ class AcceptanceSession:
 
     def command(self, command: str, expected: str = "OK",
                 timeout_s: float = 3.0, via: str = "cdc",
-                busy_retries: int = 3) -> str:
+                busy_retries: int = 3, idempotent: bool = True) -> str:
         """Send a command via the specified control link ('cdc' or 'uart').
 
         C8: During live modes, control/polling goes through the non-target link
@@ -254,6 +257,13 @@ class AcceptanceSession:
         in flight in IDLE) and ERROR:TX_BUSY (control buffer pool exhausted,
         counts command_error) are transient.  Back off and retry a bounded
         number of times instead of treating them as a fatal RuntimeError.
+        W-2: ``idempotent=False`` marks state-transition commands (AT+STOP,
+        AT+START, AT+SDCLEAR=CONFIRM, AT+EXPORT=).  For these a transient
+        ERROR:BUSY/ERROR:TX_BUSY means "the command already executed, only its
+        reply failed to transmit", so re-sending it would be rejected as
+        ERROR:STATE and turn a good run into a false failure.  Non-idempotent
+        commands therefore never re-send on BUSY/TX_BUSY; they raise a clear
+        structured RuntimeError instead.
         """
         assert self.cdc is not None and self.cdc_port is not None
         assert self.uart is not None and self.uart_port is not None
@@ -291,6 +301,16 @@ class AcceptanceSession:
                 raise TimeoutError(
                     f"timed out waiting for {command} via {via} response "
                     f"containing {expected!r}")
+            if not idempotent:
+                # W-2: never re-send a state-transition command on a transient
+                # send failure; the firmware already applied it, so a duplicate
+                # would be rejected as ERROR:STATE and mask a healthy run.
+                raise RuntimeError(
+                    f"{command} via {via} hit a transient send failure "
+                    f"(ERROR:BUSY/ERROR:TX_BUSY) on a NON-idempotent command; "
+                    f"not re-sending because the command already executed and a "
+                    f"duplicate would be rejected as ERROR:STATE (verify the "
+                    f"resulting state with AT+STATE? instead of retrying)")
             if attempt >= busy_retries:
                 raise RuntimeError(
                     f"{command} via {via} stayed transiently busy "
@@ -317,8 +337,15 @@ class AcceptanceSession:
     def stop_and_wait(self, via: str = "cdc") -> tuple[float, dict[str, Any]]:
         """C1: Measure STOP→OK latency and verify zero post-STOP sensor frames."""
         assert self.uart is not None and self.cdc is not None
+        # S-8: capture the post-STOP sensor-frame baseline BEFORE writing
+        # AT+STOP so C1 covers the entire STOP handshake window (AT+STOP ->
+        # STOPPING -> IDLE), not only the interval after OK returns.
+        self._post_stop_baseline = (
+            self.uart.snapshot()["sensor_frames"],
+            self.cdc.snapshot()["sensor_frames"],
+        )
         started = time.monotonic()
-        self.command("AT+STOP", timeout_s=3.0, via=via)
+        self.command("AT+STOP", timeout_s=3.0, via=via, idempotent=False)
         elapsed = time.monotonic() - started
         state = self.state(via=via)
         if state["state"] != "IDLE":
@@ -327,22 +354,40 @@ class AcceptanceSession:
         return elapsed, state
 
     def post_stop_sensor_frame_count(self, wait_s: float = 1.0) -> int:
-        """C1: After STOP OK, snapshot both links, wait, then count new sensor frames."""
+        """C1/S-8: count sensor frames since the pre-AT+STOP baseline.
+
+        The baseline is normally captured by ``stop_and_wait`` just before it
+        writes AT+STOP, so the count spans the whole STOP handshake plus the
+        ``wait_s`` observation window.  If called without a prior stop_and_wait
+        it falls back to a fresh baseline (delta over ``wait_s`` only).
+        """
         assert self.uart is not None and self.cdc is not None
-        uart_before = self.uart.snapshot()["sensor_frames"]
-        cdc_before = self.cdc.snapshot()["sensor_frames"]
+        if self._post_stop_baseline is None:
+            self._post_stop_baseline = (
+                self.uart.snapshot()["sensor_frames"],
+                self.cdc.snapshot()["sensor_frames"],
+            )
+        uart_before, cdc_before = self._post_stop_baseline
         time.sleep(wait_s)
         uart_after = self.uart.snapshot()["sensor_frames"]
         cdc_after = self.cdc.snapshot()["sensor_frames"]
         return (uart_after - uart_before) + (cdc_after - cdc_before)
 
-    def probe_nontarget_at(self, via: str) -> bool:
-        """C8: Verify the non-target link responds to AT and AT+STATE?."""
+    def probe_nontarget_at(self, via: str, timeout_s: float = 2.0,
+                           busy_retries: int = 3) -> bool:
+        """C8: Verify the non-target link responds to AT and AT+STATE?.
+
+        N-5: callers on the 50 ms polling hot path pass a small ``timeout_s``
+        and ``busy_retries=0`` so a transient non-target hiccup degrades the
+        probe to False quickly instead of blocking and dropping lag samples.
+        """
         try:
-            reply = self.command("AT", "OK", timeout_s=2.0, via=via)
+            reply = self.command("AT", "OK", timeout_s=timeout_s, via=via,
+                                 busy_retries=busy_retries)
             if "OK" not in reply:
                 return False
-            reply = self.command("AT+STATE?", "+STATE:", timeout_s=2.0, via=via)
+            reply = self.command("AT+STATE?", "+STATE:", timeout_s=timeout_s,
+                                 via=via, busy_retries=busy_retries)
             return "+STATE:" in reply
         except (RuntimeError, TimeoutError, OSError, ValueError):
             return False
@@ -416,7 +461,8 @@ def _run_live(session: AcceptanceSession, target: str) -> dict[str, Any]:
     # C8: control link is the opposite of the data target
     control_via = "cdc" if target == "UART" else "uart"
 
-    session.command("AT+SDCLEAR=CONFIRM", timeout_s=5.0, via=control_via)
+    session.command("AT+SDCLEAR=CONFIRM", timeout_s=5.0, via=control_via,
+                    idempotent=False)
     session.command(f"AT+LIVESTREAM={target}", via=control_via)
     state_before = session.state(via=control_via)
     assert state_before["live_target"] == target
@@ -426,7 +472,7 @@ def _run_live(session: AcceptanceSession, target: str) -> dict[str, Any]:
     nontarget_at_pre = session.probe_nontarget_at(via=control_via)
 
     uart_start, cdc_start = session.uart.snapshot(), session.cdc.snapshot()
-    session.command("AT+START", via=control_via)
+    session.command("AT+START", via=control_via, idempotent=False)
 
     # C2: After SDCLEAR, sequence baseline is reset; poll lag from state.
     # MN-3: probe the non-target link a second time at ~50% of the duration and
@@ -444,7 +490,10 @@ def _run_live(session: AcceptanceSession, target: str) -> dict[str, Any]:
     while time.monotonic() < deadline:
         if not midstream_probed and time.monotonic() >= midstream_mark:
             midstream_probed = True
-            nontarget_at_midstream = session.probe_nontarget_at(via=control_via)
+            # N-5: cheap probe on the 50 ms polling hot path — no busy backoff
+            # and a short cap so a transient hiccup cannot starve lag sampling.
+            nontarget_at_midstream = session.probe_nontarget_at(
+                via=control_via, timeout_s=0.5, busy_retries=0)
         try:
             current_state = session.state(via=control_via)
         except (TimeoutError, RuntimeError, OSError, ValueError):
@@ -521,11 +570,11 @@ def _run_live(session: AcceptanceSession, target: str) -> dict[str, Any]:
 
 def _run_overwrite(session: AcceptanceSession) -> dict[str, Any]:
     """C3: BUFFER_FULL does not stop acquisition; remained_acquiring must hold."""
-    session.command("AT+SDCLEAR=CONFIRM", timeout_s=5.0)
+    session.command("AT+SDCLEAR=CONFIRM", timeout_s=5.0, idempotent=False)
     session.command("AT+LIVESTREAM=UART")
     before = session.state()
     status_before = session.status()
-    session.command("AT+START")
+    session.command("AT+START", idempotent=False)
     remained_acquiring = True
     deadline = time.monotonic() + session.arguments.duration
     latest = before
@@ -619,6 +668,12 @@ def _run_uuid_persistence(session: AcceptanceSession) -> dict[str, Any]:
         # Phase 2: still DERIVED after a cold boot -> derivation determinism.
         uuid_stable = state["uuid"] == baseline["uuid"]
         baud_stable = current_baud == baseline["baud"]
+        # S-2: soft cold-boot evidence — a real power cycle resets uptime_us, so
+        # phase2 uptime should fall BELOW the phase1 uptime recorded before the
+        # boot.  Soft signal only (never flips ``passed``): if it does not hold
+        # the operator may have soft-reset instead of power-cycled the device.
+        phase1_uptime = int(baseline.get("phase1", {}).get("uptime_us", 0))
+        cold_boot_evidenced = uptime_us < phase1_uptime
         baseline["phase2"] = {"generated_utc": generated_utc,
                               "uptime_us": uptime_us}
         if not (uuid_stable and baud_stable):
@@ -629,6 +684,7 @@ def _run_uuid_persistence(session: AcceptanceSession) -> dict[str, Any]:
                 "evidence": [],
                 "uuid_stable_across_cold_boot": uuid_stable,
                 "baud_stable_across_cold_boot": baud_stable,
+                "cold_boot_evidenced": cold_boot_evidenced,
                 "reason": "派生 UUID 或 baud 跨冷启动不一致（证据项6失败）",
                 "baseline": baseline,
                 "state": state,
@@ -639,19 +695,26 @@ def _run_uuid_persistence(session: AcceptanceSession) -> dict[str, Any]:
         session.command("AT+LIVESTREAM=CDC")
         verify = session.state()
         _write_baseline(baseline)
-        return {
+        result = {
             "passed": verify["uuid_source"] == "CONFIGURED"
                       and verify["live_target"] == "CDC",
             "phase": "derived",
             "evidence": ["6:两次冷启动派生UUID稳定"],
             "uuid_stable_across_cold_boot": uuid_stable,
             "baud_stable_across_cold_boot": baud_stable,
+            "cold_boot_evidenced": cold_boot_evidenced,
             "instruction": "已验证派生 UUID 跨冷启动稳定（证据项6），并写入 "
                            "AT+UUID + AT+LIVESTREAM=CDC。请再次完全断电再上电，"
                            "然后重新运行 --mode uuid-persistence 进入阶段3。",
             "baseline": baseline,
             "state": verify,
         }
+        if not cold_boot_evidenced:
+            result["reason"] = (
+                "软断言未满足：phase2 uptime_us 未回落到低于 phase1，可能未真正"
+                "断电冷启动（软复位不清零 uptime_us）；cold_boot_evidenced=false，"
+                "证据项6的冷启动前提存疑。")
+        return result
 
     if state["uuid_source"] == "CONFIGURED" and baseline is not None:
         # Phase 3: persisted CONFIGURED across the second cold boot.
@@ -660,6 +723,10 @@ def _run_uuid_persistence(session: AcceptanceSession) -> dict[str, Any]:
         livestream_reverted = livestream_target == "UART"  # volatile cold-boot default
         configured = state["uuid_source"] == "CONFIGURED"
         passed = uuid_stable and baud_stable and livestream_reverted and configured
+        # S-2: soft cold-boot evidence for the second power cycle — phase3 uptime
+        # should fall below the phase2 uptime recorded before this boot.
+        phase2_uptime = int(baseline.get("phase2", {}).get("uptime_us", 0))
+        cold_boot_evidenced = uptime_us < phase2_uptime
         result = {
             "passed": passed,
             "phase": "configured",
@@ -669,10 +736,16 @@ def _run_uuid_persistence(session: AcceptanceSession) -> dict[str, Any]:
             "uuid_stable": uuid_stable,
             "baud_stable": baud_stable,
             "livestream_reverted_to_uart": livestream_reverted,
+            "cold_boot_evidenced": cold_boot_evidenced,
             "baseline": baseline,
             "phase3": {"generated_utc": generated_utc, "uptime_us": uptime_us},
             "state": state,
         }
+        if not cold_boot_evidenced:
+            result["reason"] = (
+                "软断言未满足：phase3 uptime_us 未回落到低于 phase2，可能未真正"
+                "断电冷启动（软复位不清零 uptime_us）；cold_boot_evidenced=false，"
+                "证据项7/8的冷启动前提存疑。")
         if passed:
             # MN-2: consume the baseline so a re-run cannot reuse a stale base.
             baseline_path.unlink(missing_ok=True)
@@ -732,10 +805,10 @@ def _export_model(session: AcceptanceSession, target: str,
 
 
 def _prepare_short_archive(session: AcceptanceSession) -> dict[str, Any]:
-    session.command("AT+SDCLEAR=CONFIRM", timeout_s=5.0)
+    session.command("AT+SDCLEAR=CONFIRM", timeout_s=5.0, idempotent=False)
     session.command("AT+LIVESTREAM=UART")
     identity = session.state()
-    session.command("AT+START")
+    session.command("AT+START", idempotent=False)
     time.sleep(session.arguments.duration)
     session.stop_and_wait()
     return identity
@@ -747,7 +820,7 @@ def _run_export(session: AcceptanceSession, target: str) -> dict[str, Any]:
     uart_marker, cdc_marker = session.uart.snapshot(), session.cdc.snapshot()
     cli_marker = cdc_marker["cli"]
     started = time.monotonic()
-    session.command(f"AT+EXPORT={target}", "EXPORT_BEGIN:")
+    session.command(f"AT+EXPORT={target}", "EXPORT_BEGIN:", idempotent=False)
     _wait_until(lambda: "EXPORT_END:" in session.cdc.cli_since(cli_marker),
                 max(30.0, session.arguments.duration * 20.0), "EXPORT_END")
     elapsed = time.monotonic() - started
@@ -762,18 +835,18 @@ def _run_interrupt_export(session: AcceptanceSession) -> dict[str, Any]:
     assert session.uart is not None and session.cdc is not None
     identity = _prepare_short_archive(session)
     first_marker = session.cdc.snapshot()
-    session.command("AT+EXPORT=CDC", "EXPORT_BEGIN:")
+    session.command("AT+EXPORT=CDC", "EXPORT_BEGIN:", idempotent=False)
     _wait_until(lambda: len(_sensor_frames(session.cdc.frames_since(first_marker),
                                            archive=True)) >= 1,
                 5.0, "first exported frame")
-    session.command("AT+START")
+    session.command("AT+START", idempotent=False)
     resumed = session.state()["state"] == "ACQUIRE"
     first_frames = _sensor_frames(session.cdc.frames_since(first_marker), archive=True)
     time.sleep(min(1.0, session.arguments.duration))
     session.stop_and_wait()
     second_marker = session.cdc.snapshot()
     cli_marker = second_marker["cli"]
-    session.command("AT+EXPORT=CDC", "EXPORT_BEGIN:")
+    session.command("AT+EXPORT=CDC", "EXPORT_BEGIN:", idempotent=False)
     _wait_until(lambda: "EXPORT_END:" in session.cdc.cli_since(cli_marker),
                 max(30.0, session.arguments.duration * 20.0), "resumed EXPORT_END")
     second_frames = _sensor_frames(session.cdc.frames_since(second_marker), archive=True)

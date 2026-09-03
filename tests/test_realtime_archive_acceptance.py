@@ -1,3 +1,4 @@
+import argparse
 from dataclasses import replace
 
 import pytest
@@ -10,7 +11,7 @@ from sensor_host.tools.realtime_archive_models import (
     UartExportAcceptance,
     sequence_lag,
 )
-from host.tools.realtime_archive_acceptance import _parse_state
+from host.tools.realtime_archive_acceptance import AcceptanceSession, _parse_state
 
 
 def test_state_parser_exposes_storage_readiness() -> None:
@@ -139,6 +140,76 @@ def test_d2_parser_flags_tx_busy_as_transient_diagnostic() -> None:
     diagnostic, not a generic incomplete-response failure."""
     with pytest.raises(ValueError, match="TX_BUSY"):
         _parse_state("ERROR:TX_BUSY\r\n")
+
+
+class _FakePort:
+    """Records every write so a test can assert a command was (not) re-sent."""
+
+    def __init__(self) -> None:
+        self.writes: list[bytes] = []
+
+    def write(self, data: bytes) -> int:
+        self.writes.append(data)
+        return len(data)
+
+    def flush(self) -> None:
+        pass
+
+
+class _FakeReader:
+    """Always returns the same scripted CLI text from cli_since()."""
+
+    def __init__(self, reply: str) -> None:
+        self._reply = reply
+
+    def snapshot(self) -> dict[str, int]:
+        return {"cli": 0}
+
+    def cli_since(self, marker: int) -> str:
+        return self._reply
+
+
+def _fake_session(tmp_path, reply: str) -> tuple[AcceptanceSession, _FakePort]:
+    """Build an AcceptanceSession with fake CDC/UART ports that emit ``reply``."""
+    arguments = argparse.Namespace(output=tmp_path / "out.json")
+    session = AcceptanceSession(arguments)
+    port = _FakePort()
+    reader = _FakeReader(reply)
+    session.cdc_port = port
+    session.cdc = reader  # type: ignore[assignment]
+    session.uart_port = port
+    session.uart = reader  # type: ignore[assignment]
+    return session, port
+
+
+def test_w2_non_idempotent_command_never_resends_on_tx_busy(tmp_path) -> None:
+    """W-2: AT+STOP with idempotent=False must NOT be re-sent on ERROR:TX_BUSY.
+
+    TX_BUSY means the command already executed and only its reply failed to
+    transmit; re-sending AT+STOP would be rejected as ERROR:STATE and turn a
+    healthy run into a false failure.  command() must raise a clear structured
+    RuntimeError after exactly one write.
+    """
+    session, port = _fake_session(tmp_path, "ERROR:TX_BUSY\r\n")
+    with pytest.raises(RuntimeError, match="NON-idempotent"):
+        session.command("AT+STOP", idempotent=False)
+    assert len(port.writes) == 1
+
+
+def test_w2_non_idempotent_command_never_resends_on_busy(tmp_path) -> None:
+    """W-2: same no-resend guarantee for ERROR:BUSY on AT+SDCLEAR=CONFIRM."""
+    session, port = _fake_session(tmp_path, "ERROR:BUSY\r\n")
+    with pytest.raises(RuntimeError, match="NON-idempotent"):
+        session.command("AT+SDCLEAR=CONFIRM", idempotent=False)
+    assert len(port.writes) == 1
+
+
+def test_w2_idempotent_command_still_backs_off_and_resends(tmp_path) -> None:
+    """Contrast: idempotent commands keep the bounded busy-retry behaviour."""
+    session, port = _fake_session(tmp_path, "ERROR:BUSY\r\n")
+    with pytest.raises(RuntimeError, match="transiently busy"):
+        session.command("AT+LIVESTREAM?", idempotent=True, busy_retries=1)
+    assert len(port.writes) == 2  # initial send + 1 backoff re-send
 
 
 def test_overwrite_requires_wrap_without_errors_and_bounded_stop() -> None:
