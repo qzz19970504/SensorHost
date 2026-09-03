@@ -47,12 +47,13 @@ _LIVE_DROP_PATTERN = re.compile(
 class PortReader(threading.Thread):
     """Continuously persist and parse one serial endpoint."""
 
-    def __init__(self, port: serial.Serial, raw_path: Path, counters_only: bool) -> None:
+    def __init__(self, port: serial.Serial, raw_path: Path, counters_only: bool,
+                 decode_sensor_payload: bool = True) -> None:
         super().__init__(daemon=True)
         self.port = port
         self.raw_path = raw_path
         self.counters_only = counters_only
-        self.parser = StreamParser()
+        self.parser = StreamParser(decode_sensor_payload=decode_sensor_payload)
         self.frames: list[Frame] = []
         self.cli: list[str] = []
         self.statuses: list[Any] = []
@@ -195,8 +196,11 @@ class AcceptanceSession:
                                        self.arguments.uart_baud, timeout=0.02)
         self.cdc_port.reset_input_buffer()
         self.uart_port.reset_input_buffer()
-        self.cdc = PortReader(self.cdc_port, self.cdc_raw_path, counters_only)
-        self.uart = PortReader(self.uart_port, self.uart_raw_path, counters_only)
+        lightweight = self.arguments.mode == "live"
+        self.cdc = PortReader(self.cdc_port, self.cdc_raw_path, counters_only,
+                              decode_sensor_payload=not lightweight)
+        self.uart = PortReader(self.uart_port, self.uart_raw_path, counters_only,
+                               decode_sensor_payload=not lightweight)
         self.cdc.start()
         self.uart.start()
         return self

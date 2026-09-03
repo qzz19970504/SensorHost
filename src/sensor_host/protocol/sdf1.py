@@ -254,11 +254,12 @@ def _decode_status(payload: bytes) -> StatusV1:
 
 
 class StreamParser:
-    def __init__(self) -> None:
+    def __init__(self, decode_sensor_payload: bool = True) -> None:
         self.stats = ParserStats()
         self._buffer = bytearray()
         self._last_sequence: int | None = None
         self._iis_time = IisTimestampReconstructor()
+        self._decode_sensor_payload = decode_sensor_payload
 
     @property
     def buffered_bytes(self) -> int:
@@ -411,6 +412,8 @@ class StreamParser:
             if len(payload) != item_count * IIS_WORD_SIZE:
                 self.stats.payload_errors += 1
                 return None
+            if not self._decode_sensor_payload:
+                return Frame(**common)
             words = decode_iis_words(payload)
             samples = self._iis_time.process(words, timestamp_us)
             return Frame(**common, iis_words=words, iis_samples=samples)
