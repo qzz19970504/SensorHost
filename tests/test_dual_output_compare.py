@@ -1,5 +1,6 @@
 from sensor_host.protocol import Frame, MessageType
 from sensor_host.tools.dual_output_compare import compare_sensor_frames
+from host.tools import dual_output_acceptance
 
 
 def frame(message_type: MessageType, sequence: int, payload: bytes) -> Frame:
@@ -51,3 +52,11 @@ def test_reports_missing_and_same_sequence_content_mismatch() -> None:
     assert result.uart_only_sequences == (10,)
     assert result.cdc_only_sequences == (12,)
     assert result.content_mismatches == (11,)
+
+
+def test_dual_output_acceptance_tool_is_deprecated(capsys) -> None:
+    """The capture tool is retired by the mutual-exclusion live-stream refactor."""
+    assert dual_output_acceptance.main() == 2
+    captured = capsys.readouterr()
+    assert "DEPRECATED" in captured.err
+    assert "live-uart" in captured.err and "live-cdc" in captured.err

@@ -48,6 +48,9 @@ def _warm_up(
 ) -> StatusV1:
     parser = StreamParser()
     latest_status = None
+    # C4: Cold-boot default is LIVESTREAM=UART; must select CDC before START
+    # so that CDC receives active sensor frames.
+    transport.write_control(b"AT+LIVESTREAM=CDC")
     transport.write_control(b"AT+START")
     transport.write_control(b"AT+STATE?")
     transport.write_control(b"status")
@@ -192,6 +195,8 @@ def run_acceptance(
             recorder.stop()
         try:
             transport.write_control(b"AT+STOP")
+            # C4: Restore LIVESTREAM=UART after CDC acceptance
+            transport.write_control(b"AT+LIVESTREAM=UART")
         except (OSError, RuntimeError):
             pass
         transport.close()
