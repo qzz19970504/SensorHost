@@ -79,7 +79,19 @@ def _ensure_idle(
     parser: StreamParser,
     timeout_s: float = 5.0,
 ) -> bool:
-    """R9: AT+STOP (tolerate ERROR:STATE when already IDLE), then poll to IDLE."""
+    """R9/N-6: reach IDLE, skipping AT+STOP when the device is already IDLE.
+
+    N-6: query AT+STATE? first; if already IDLE return at once so warm-up and
+    restore no longer burn a fixed ~2 s AT+STOP timeout on every round.  Only
+    when not IDLE do we issue AT+STOP (tolerating ERROR:STATE) and poll.
+    """
+    transport.write_control(b"AT+STATE?")
+    try:
+        reply = _read_cli(transport, parser, "+STATE:")
+    except (RuntimeError, TimeoutError):
+        reply = ""
+    if "+STATE:IDLE" in reply:
+        return True
     transport.write_control(b"AT+STOP")
     try:
         _read_cli(transport, parser, "OK", tolerate=("ERROR:STATE",))
@@ -103,21 +115,36 @@ def _set_livestream(
     parser: StreamParser,
     target: str,
     timeout_s: float = 3.0,
+    busy_retries: int = 3,
 ) -> bool:
-    """R9: switch live target in IDLE and validate both the set and query reply."""
-    transport.write_control(f"AT+LIVESTREAM={target}".encode("ascii"))
-    try:
-        reply = _read_cli(transport, parser, "OK", timeout_s=timeout_s)
-    except (RuntimeError, TimeoutError):
-        return False
-    if "ERROR:" in reply:
-        return False
-    transport.write_control(b"AT+LIVESTREAM?")
-    try:
-        query = _read_cli(transport, parser, "+LIVESTREAM:", timeout_s=timeout_s)
-    except (RuntimeError, TimeoutError):
-        return False
-    return f"+LIVESTREAM:{target}" in query
+    """R9/N-6: switch live target in IDLE and validate the set + query reply.
+
+    N-6: AT+LIVESTREAM= is idempotent (re-selecting the current target returns
+    OK), so a transient ERROR:BUSY — a live transfer still draining while IDLE —
+    is backed off and retried a bounded number of times, aligned with
+    AcceptanceSession.command()'s busy-retry policy.
+    """
+    for attempt in range(busy_retries + 1):
+        transport.write_control(f"AT+LIVESTREAM={target}".encode("ascii"))
+        try:
+            reply = _read_cli(transport, parser, "OK", timeout_s=timeout_s,
+                              tolerate=("ERROR:BUSY",))
+        except (RuntimeError, TimeoutError):
+            return False
+        if "ERROR:BUSY" in reply:
+            if attempt >= busy_retries:
+                return False
+            time.sleep(0.5 * (2 ** attempt))
+            continue
+        if "ERROR:" in reply:
+            return False
+        transport.write_control(b"AT+LIVESTREAM?")
+        try:
+            query = _read_cli(transport, parser, "+LIVESTREAM:", timeout_s=timeout_s)
+        except (RuntimeError, TimeoutError):
+            return False
+        return f"+LIVESTREAM:{target}" in query
+    return False
 
 
 def _warm_up(
@@ -326,6 +353,19 @@ def main() -> int:
     except (OSError, RuntimeError, ValueError, TimeoutError) as error:
         print(f"CDC acceptance failed: {error}", file=sys.stderr)
         return 2
+    livestream_set_ok = bool(
+        control_results.get("livestream_set_cdc_ok")
+        and control_results.get("livestream_restore_uart_ok"))
+    # Minor-b: if LIVESTREAM=UART could not be restored the device is left
+    # streaming to CDC, so the next round's preflight (which expects the
+    # cold-boot UART default) would fail.  Warn loudly on stderr AND fold the
+    # handshake into the exit code so it cannot slip through as a green run.
+    if not control_results.get("livestream_restore_uart_ok"):
+        print(
+            "WARNING: 恢复 LIVESTREAM=UART 失败——设备可能仍停留在 LIVESTREAM=CDC，"
+            "下一轮 preflight 前必须给设备完全断电再上电（冷启动）以恢复 UART 默认。",
+            file=sys.stderr,
+        )
     document = {
         "passed": report.passed,
         "port": arguments.port,
@@ -334,15 +374,13 @@ def main() -> int:
         "baseline_status": dataclasses.asdict(baseline_status),
         "final_status": dataclasses.asdict(final_status),
         "control_results": control_results,
-        "livestream_set_ok": bool(
-            control_results.get("livestream_set_cdc_ok")
-            and control_results.get("livestream_restore_uart_ok")),
+        "livestream_set_ok": livestream_set_ok,
         "generated_utc": datetime.now(timezone.utc).isoformat(),
     }
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(document, indent=2), encoding="utf-8")
     print(json.dumps(document, indent=2))
-    return 0 if report.passed else 1
+    return 0 if (report.passed and livestream_set_ok) else 1
 
 
 if __name__ == "__main__":
