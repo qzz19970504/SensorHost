@@ -42,15 +42,101 @@ def _feed(parser: StreamParser, chunk: bytes) -> tuple[StatusV1 | None, int]:
     return latest_status, jy61pl_frames
 
 
+_CLI_READ_TIMEOUT_S = 2.0
+
+
+def _read_cli(
+    transport: CdcSerialTransport,
+    parser: StreamParser,
+    expected: str,
+    timeout_s: float = _CLI_READ_TIMEOUT_S,
+    tolerate: tuple[str, ...] = (),
+) -> str:
+    """Read CLI_RESPONSE frames until ``expected`` appears in the text.
+
+    Returns the accumulated CLI text.  Raises RuntimeError on an unexpected
+    ``ERROR:`` reply (unless a substring of ``tolerate`` is present) and
+    TimeoutError if ``expected`` never arrives.  Unlike a bare write_control,
+    this validates the firmware reply so a swallowed ERROR:STATE cannot
+    masquerade as success and leave LIVESTREAM unset (R9 -> zero CDC frames).
+    """
+    collected = ""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        for frame in parser.feed(transport.read(_READ_BYTES, _READ_TIMEOUT_S)):
+            if frame.message_type is MessageType.CLI_RESPONSE and frame.cli_text:
+                collected += frame.cli_text
+        if expected in collected:
+            return collected
+        if "ERROR:" in collected and not any(tok in collected for tok in tolerate):
+            raise RuntimeError(f"CDC control replied: {collected.strip()}")
+    raise TimeoutError(
+        f"timed out waiting for {expected!r}; got {collected.strip()!r}")
+
+
+def _ensure_idle(
+    transport: CdcSerialTransport,
+    parser: StreamParser,
+    timeout_s: float = 5.0,
+) -> bool:
+    """R9: AT+STOP (tolerate ERROR:STATE when already IDLE), then poll to IDLE."""
+    transport.write_control(b"AT+STOP")
+    try:
+        _read_cli(transport, parser, "OK", tolerate=("ERROR:STATE",))
+    except (RuntimeError, TimeoutError):
+        pass
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        transport.write_control(b"AT+STATE?")
+        try:
+            reply = _read_cli(transport, parser, "+STATE:")
+        except (RuntimeError, TimeoutError):
+            reply = ""
+        if "+STATE:IDLE" in reply:
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def _set_livestream(
+    transport: CdcSerialTransport,
+    parser: StreamParser,
+    target: str,
+    timeout_s: float = 3.0,
+) -> bool:
+    """R9: switch live target in IDLE and validate both the set and query reply."""
+    transport.write_control(f"AT+LIVESTREAM={target}".encode("ascii"))
+    try:
+        reply = _read_cli(transport, parser, "OK", timeout_s=timeout_s)
+    except (RuntimeError, TimeoutError):
+        return False
+    if "ERROR:" in reply:
+        return False
+    transport.write_control(b"AT+LIVESTREAM?")
+    try:
+        query = _read_cli(transport, parser, "+LIVESTREAM:", timeout_s=timeout_s)
+    except (RuntimeError, TimeoutError):
+        return False
+    return f"+LIVESTREAM:{target}" in query
+
+
 def _warm_up(
     transport: CdcSerialTransport,
     duration_s: float,
-) -> StatusV1:
+) -> tuple[StatusV1, dict[str, bool]]:
     parser = StreamParser()
     latest_status = None
-    # C4: Cold-boot default is LIVESTREAM=UART; must select CDC before START
+    # R9: reach IDLE first, then select CDC and validate the reply.  A bare
+    # write_control silently swallows ERROR:STATE, which would leave LIVESTREAM
+    # on UART and cause a false "zero CDC frames" acceptance failure.
+    idle_ok = _ensure_idle(transport, parser)
+    set_cdc_ok = idle_ok and _set_livestream(transport, parser, "CDC")
+    handshake = {"idle_before_switch": idle_ok, "livestream_set_cdc_ok": set_cdc_ok}
+    if not set_cdc_ok:
+        raise RuntimeError(
+            f"failed to select LIVESTREAM=CDC in IDLE before START (idle={idle_ok})")
+    # C4: Cold-boot default is LIVESTREAM=UART; CDC selected above before START
     # so that CDC receives active sensor frames.
-    transport.write_control(b"AT+LIVESTREAM=CDC")
     transport.write_control(b"AT+START")
     transport.write_control(b"AT+STATE?")
     transport.write_control(b"status")
@@ -78,7 +164,7 @@ def _warm_up(
             latest_status = status
     if latest_status is None:
         raise RuntimeError("firmware did not return a STATUS frame during warmup")
-    return latest_status
+    return latest_status, handshake
 
 
 def run_acceptance(
@@ -87,15 +173,17 @@ def run_acceptance(
     output_path: Path,
     watermark: int,
     warmup_s: float,
-) -> tuple[AcceptanceReport, StatusV1, StatusV1]:
+) -> tuple[AcceptanceReport, StatusV1, StatusV1, dict[str, bool]]:
     """Acquire, record, replay and compare one CDC acceptance session."""
     transport = CdcSerialTransport()
     recorder = RawSessionRecorder()
     recorder_active = False
+    control_results: dict[str, bool] = {}
     transport.open(port)
     try:
         transport.write_control(f"acq watermark {watermark}".encode("ascii"))
-        baseline_status = _warm_up(transport, warmup_s)
+        baseline_status, handshake = _warm_up(transport, warmup_s)
+        control_results.update(handshake)
         if baseline_status.acquisition_state != 1:
             raise RuntimeError(
                 "firmware is not running acquisition "
@@ -189,16 +277,19 @@ def run_acceptance(
             replay_crc_errors=replay_parser.stats.crc_errors,
             replay_sequence_gaps=replay_parser.stats.sequence_gaps,
         )
-        return report, baseline_status, latest_status
+        return report, baseline_status, latest_status, control_results
     finally:
         if recorder_active:
             recorder.stop()
+        # R9: restore LIVESTREAM=UART only after reaching IDLE, validating the
+        # reply so a swallowed ERROR:STATE is not mistaken for success.
         try:
-            transport.write_control(b"AT+STOP")
-            # C4: Restore LIVESTREAM=UART after CDC acceptance
-            transport.write_control(b"AT+LIVESTREAM=UART")
-        except (OSError, RuntimeError):
-            pass
+            restore_parser = StreamParser()
+            idle_ok = _ensure_idle(transport, restore_parser)
+            control_results["livestream_restore_uart_ok"] = (
+                idle_ok and _set_livestream(transport, restore_parser, "UART"))
+        except (OSError, RuntimeError, TimeoutError):
+            control_results["livestream_restore_uart_ok"] = False
         transport.close()
 
 
@@ -225,14 +316,14 @@ def main() -> int:
     )
     report_path = arguments.json_report or output_path.with_suffix(".acceptance.json")
     try:
-        report, baseline_status, final_status = run_acceptance(
+        report, baseline_status, final_status, control_results = run_acceptance(
             port=arguments.port,
             duration_s=arguments.duration,
             output_path=output_path,
             watermark=arguments.watermark,
             warmup_s=arguments.warmup,
         )
-    except (OSError, RuntimeError, ValueError) as error:
+    except (OSError, RuntimeError, ValueError, TimeoutError) as error:
         print(f"CDC acceptance failed: {error}", file=sys.stderr)
         return 2
     document = {
@@ -242,6 +333,10 @@ def main() -> int:
         "report": dataclasses.asdict(report),
         "baseline_status": dataclasses.asdict(baseline_status),
         "final_status": dataclasses.asdict(final_status),
+        "control_results": control_results,
+        "livestream_set_ok": bool(
+            control_results.get("livestream_set_cdc_ok")
+            and control_results.get("livestream_restore_uart_ok")),
         "generated_utc": datetime.now(timezone.utc).isoformat(),
     }
     report_path.parent.mkdir(parents=True, exist_ok=True)
