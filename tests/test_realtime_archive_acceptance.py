@@ -1,5 +1,7 @@
 from dataclasses import replace
 
+import pytest
+
 from sensor_host.tools.realtime_archive_models import (
     CdcExportAcceptance,
     InterruptedExportAcceptance,
@@ -55,19 +57,32 @@ def test_sequence_lag_wraparound() -> None:
     assert sequence_lag(0xFFFFFFFF, 0xFFFFFFFF) == 0
 
 
-def test_live_acceptance_rejects_each_required_invariant() -> None:
-    accepted = LiveAcceptance(
-        live_target="UART",
+def _live(target: str = "UART", **overrides: object) -> LiveAcceptance:
+    """Build a passing LiveAcceptance for ``target`` with optional overrides."""
+    fields: dict[str, object] = dict(
+        live_target=target,
         target_frames=200,
         nontarget_frames=0,
         max_sequence_lag=8,
         target_crc_errors=0,
         nontarget_crc_errors=0,
+        header_errors=0,
+        length_errors=0,
+        payload_errors=0,
+        physical_tx_error_delta=0,
         drops_iis_delta=0,
         drops_jy_delta=0,
         source_drop_delta=0,
         stop_latency_s=0.5,
+        post_stop_sensor_frames=0,
+        nontarget_at_probe=True,
     )
+    fields.update(overrides)
+    return LiveAcceptance(**fields)  # type: ignore[arg-type]
+
+
+def test_live_acceptance_rejects_each_required_invariant() -> None:
+    accepted = _live("UART")
     assert accepted.passed
     for field, value in {
         "live_target": "INVALID",
@@ -76,12 +91,47 @@ def test_live_acceptance_rejects_each_required_invariant() -> None:
         "max_sequence_lag": 65,
         "target_crc_errors": 1,
         "nontarget_crc_errors": 1,
-        "drops_iis_delta": 1,
-        "drops_jy_delta": 1,
+        "header_errors": 1,
+        "length_errors": 1,
+        "payload_errors": 1,
+        "physical_tx_error_delta": 1,
         "source_drop_delta": 1,
         "stop_latency_s": 2.01,
+        "post_stop_sensor_frames": 1,
+        "nontarget_at_probe": False,
     }.items():
         assert not replace(accepted, **{field: value}).passed
+
+
+def test_c7_uart_target_allows_newest_wins_live_drops() -> None:
+    # UART live target tolerates shared live-drops (newest-wins backpressure)
+    # as long as source_drop, protocol and physical TX errors stay zero.
+    assert _live("UART", drops_iis_delta=5, drops_jy_delta=3).passed
+
+
+def test_c7_cdc_target_requires_zero_live_drops() -> None:
+    assert _live("CDC").passed
+    assert not _live("CDC", drops_iis_delta=1).passed
+    assert not _live("CDC", drops_jy_delta=1).passed
+
+
+def test_c5_parser_reports_format_required_structurally() -> None:
+    parsed = _parse_state(
+        "+STATE:IDLE\r\n"
+        "+UUID:550e8400-e29b-41d4-a716-446655440000,SOURCE=DERIVED\r\n"
+        "+SD:USED=0,CAPACITY=100,PENDING_FRAMES=0,RETAINED_CHUNKS=0,"
+        "RETAINED_FRAMES=0,OVERWRITTEN_CHUNKS=0,OVERWRITTEN_FRAMES=0,"
+        "READY=0,FORMAT_REQUIRED=1\r\n"
+        "+LIVE:TARGET=UART,DROPS_IIS=0,DROPS_JY=0,"
+        "LAST_ROUTED_SEQUENCE=0,LAST_COMPLETED_SEQUENCE=0\r\nOK\r\n"
+    )
+    assert parsed["sd_ready"] is False
+    assert parsed["sd_format_required"] is True
+
+
+def test_c6_parser_flags_response_too_large() -> None:
+    with pytest.raises(ValueError, match="RESPONSE_TOO_LARGE"):
+        _parse_state("ERROR:RESPONSE_TOO_LARGE\r\n")
 
 
 def test_overwrite_requires_wrap_without_errors_and_bounded_stop() -> None:

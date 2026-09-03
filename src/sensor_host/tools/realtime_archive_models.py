@@ -12,7 +12,15 @@ def sequence_lag(routed: int, completed: int) -> int:
 
 @dataclass(frozen=True)
 class LiveAcceptance:
-    """Single-target live streaming acceptance (UART or CDC selected)."""
+    """Single-target live streaming acceptance (UART or CDC selected).
+
+    C7 conditional thresholds:
+    - CDC target: requires drops_iis_delta==0 and drops_jy_delta==0 (lossless).
+    - UART target: allows live-drops (newest-wins is expected), but requires
+      source_drop==0, all protocol errors==0, physical TX errors==0.
+    Both require max_sequence_lag<=64, nontarget_frames==0, post-STOP zero
+    sensor frames, and non-target AT probe success.
+    """
 
     live_target: str  # "UART" or "CDC"
     target_frames: int  # sensor frames on the selected link
@@ -20,25 +28,41 @@ class LiveAcceptance:
     max_sequence_lag: int  # max(routed - completed) observed, unsigned 32-bit
     target_crc_errors: int
     nontarget_crc_errors: int
+    header_errors: int  # parser header_errors delta on target link
+    length_errors: int  # parser length_errors delta on target link
+    payload_errors: int  # parser payload_errors delta on target link
+    physical_tx_error_delta: int  # uart_dma_errors (UART) or cdc_errors (CDC)
     drops_iis_delta: int  # shared IIS live-drop increment (snapshot diff)
     drops_jy_delta: int  # shared JY live-drop increment (snapshot diff)
     source_drop_delta: int
     stop_latency_s: float  # STOP dual-completion latency
+    post_stop_sensor_frames: int  # C1: sensor frames after STOP OK (must be 0)
+    nontarget_at_probe: bool  # C8: non-target link responds to AT/AT+STATE?
 
     @property
     def passed(self) -> bool:
-        return (
+        common = (
             self.live_target in ("UART", "CDC")
             and self.target_frames > 0
             and self.nontarget_frames == 0
             and self.max_sequence_lag <= 64
             and self.target_crc_errors == 0
             and self.nontarget_crc_errors == 0
-            and self.drops_iis_delta == 0
-            and self.drops_jy_delta == 0
+            and self.header_errors == 0
+            and self.length_errors == 0
+            and self.payload_errors == 0
+            and self.physical_tx_error_delta == 0
             and self.source_drop_delta == 0
             and 0.0 <= self.stop_latency_s <= 2.0
+            and self.post_stop_sensor_frames == 0
+            and self.nontarget_at_probe
         )
+        if not common:
+            return False
+        # C7: CDC requires zero live-drops; UART allows newest-wins drops
+        if self.live_target == "CDC":
+            return self.drops_iis_delta == 0 and self.drops_jy_delta == 0
+        return True
 
 
 @dataclass(frozen=True)
