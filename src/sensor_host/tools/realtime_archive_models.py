@@ -15,11 +15,26 @@ class LiveAcceptance:
     """Single-target live streaming acceptance (UART or CDC selected).
 
     C7 conditional thresholds:
-    - CDC target: requires drops_iis_delta==0 and drops_jy_delta==0 (lossless).
+    - CDC target: requires drops_iis_delta==0 and drops_jy_delta==0 (lossless,
+      USB bandwidth is sufficient so zero live-drop is expected).
     - UART target: allows live-drops (newest-wins is expected), but requires
       source_drop==0, all protocol errors==0, physical TX errors==0.
-    Both require max_sequence_lag<=64, nontarget_frames==0, zero NEW active
-    sensor frames after STOP's OK returns, and non-target AT probe success.
+    Both require nontarget_frames==0, zero NEW active sensor frames after STOP's
+    OK returns, and (when applicable) non-target AT probe success.
+
+    115200 newest-wins freshness model (user-approved requirement change):
+    the real bench receives device UART through an ESP32 gateway at 115200.
+    The UART/CDC live link only guarantees freshness (newest-wins delivers the
+    latest frame; heavy live-drop under insufficient bandwidth is expected and
+    allowed), while the SD archive guarantees completeness (source_drop==0).
+    Therefore ``max_sequence_lag`` is NO LONGER a hard gate: at 115200 a large
+    routed-vs-completed lag is a physical consequence of newest-wins backpressure,
+    not a defect.  It is retained as a reported freshness diagnostic alongside
+    the delivered frame rate (target_frames/duration), but never affects
+    ``passed``.  The genuine invariants (source_drop==0, delivered-frame
+    CRC/header/length/payload==0, physical TX errors==0, nontarget_frames==0,
+    STOP dual-completion latency, post-OK zero frames, CDC live-drop==0) remain
+    hard gates; sampling rate is never reduced to accommodate the bandwidth.
 
     C1 post-STOP gate semantics (false-negative fix): the firmware design
     explicitly allows the single in-flight live frame to complete naturally
@@ -29,12 +44,22 @@ class LiveAcceptance:
     AFTER STOP's OK returns (hard gate, must be 0), and the frame that completes
     within the handshake window is reported separately as the soft diagnostic
     ``handshake_inflight_frames`` (expected <= 1) which never affects ``passed``.
+
+    Unidirectional-UART bench: the current bench only wires the UART upload
+    direction (device->host); host->device UART is physically absent, so no AT
+    command can be sent to UART.  When the non-target link is UART and
+    ``nontarget_at_probe_applicable`` is False, the C8 non-target AT probe is
+    marked N/A and does NOT gate ``passed`` (it cannot be sent, not a failure);
+    the non-target link is still enforced silent via ``nontarget_frames==0``
+    (passive monitoring).
     """
 
     live_target: str  # "UART" or "CDC"
     target_frames: int  # sensor frames on the selected link
     nontarget_frames: int  # sensor frames on the non-selected link (must be 0)
-    max_sequence_lag: int  # max(routed - completed) observed, unsigned 32-bit
+    # Freshness DIAGNOSTIC only (not a gate) under the 115200 newest-wins model:
+    # max(routed - completed) observed, unsigned 32-bit wraparound.
+    max_sequence_lag: int
     target_crc_errors: int
     nontarget_crc_errors: int
     header_errors: int  # parser header_errors delta on target link
@@ -52,6 +77,10 @@ class LiveAcceptance:
     # window (AT+STOP written -> OK received).  Firmware allows the single
     # in-flight frame to complete here, so the expected value is <= 1.
     handshake_inflight_frames: int = 0
+    # C8 applicability: False when the non-target link is UART and host->device
+    # UART is physically absent on the bench, so the AT probe is N/A and must
+    # not gate ``passed`` (the link is still enforced silent via nontarget_frames).
+    nontarget_at_probe_applicable: bool = True
 
     @property
     def passed(self) -> bool:
@@ -59,7 +88,8 @@ class LiveAcceptance:
             self.live_target in ("UART", "CDC")
             and self.target_frames > 0
             and self.nontarget_frames == 0
-            and self.max_sequence_lag <= 64
+            # 115200 newest-wins model: max_sequence_lag is a freshness
+            # diagnostic, NOT a hard gate (user-approved requirement change).
             and self.target_crc_errors == 0
             and self.nontarget_crc_errors == 0
             and self.header_errors == 0
@@ -69,7 +99,9 @@ class LiveAcceptance:
             and self.source_drop_delta == 0
             and 0.0 <= self.stop_latency_s <= 2.0
             and self.post_stop_sensor_frames == 0
-            and self.nontarget_at_probe
+            # C8: probe gates only when applicable (unidirectional-UART bench
+            # marks it N/A because host->device UART cannot be sent).
+            and (self.nontarget_at_probe or not self.nontarget_at_probe_applicable)
         )
         if not common:
             return False

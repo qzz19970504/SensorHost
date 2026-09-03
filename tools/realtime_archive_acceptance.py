@@ -488,13 +488,30 @@ def _run_preflight(session: AcceptanceSession) -> dict[str, Any]:
 def _run_live(session: AcceptanceSession, target: str) -> dict[str, Any]:
     """Run live streaming acceptance for a single target (UART or CDC).
 
-    C8: Control/polling goes through the non-target link.
-    C2: Sequence lag baseline reset after SDCLEAR.
-    C1: Post-STOP zero sensor frame assertion.
+    115200 newest-wins freshness model + unidirectional-UART bench adaptation:
+    - Control/polling link is ``--control-link`` (default cdc).  On this bench
+      host->device UART is physically absent, so control always goes through
+      CDC.  For live-cdc the control link (CDC) is also the data target, which
+      is fine because USB bandwidth is sufficient (contention negligible).
+    - The non-target link (opposite of the data target) is enforced silent via
+      nontarget_frames==0 by passive monitoring.
+    - C8 non-target AT probe: when the non-target link is UART and
+      ``--uart-host-to-device-absent`` is set, AT cannot be sent to it, so the
+      probe is marked N/A (nontarget_at_probe_applicable=False) and does not
+      gate passed; otherwise the probe runs on the non-target link as before.
+    - max_sequence_lag is reported as a freshness diagnostic, not a hard gate.
     """
     assert session.uart is not None and session.cdc is not None
-    # C8: control link is the opposite of the data target
-    control_via = "cdc" if target == "UART" else "uart"
+    # Control/polling link (default cdc on the unidirectional-UART bench).
+    control_via = session.arguments.control_link
+    # The non-target link is the opposite of the data target; it must stay
+    # silent on active sensor frames (nontarget_frames==0).
+    nontarget_link = "uart" if target == "CDC" else "cdc"
+    # C8 applicability: host->device UART is physically absent on this bench, so
+    # a UART non-target AT probe cannot be sent and is marked N/A (not a fail);
+    # the link is still enforced silent by passive monitoring.
+    uart_h2d_absent = bool(session.arguments.uart_host_to_device_absent)
+    nontarget_probe_applicable = not (nontarget_link == "uart" and uart_h2d_absent)
 
     session.command("AT+SDCLEAR=CONFIRM", timeout_s=5.0, via=control_via,
                     idempotent=False)
@@ -503,8 +520,10 @@ def _run_live(session: AcceptanceSession, target: str) -> dict[str, Any]:
     assert state_before["live_target"] == target
     status_before = session.status(via=control_via)
 
-    # C8: Probe non-target link AT responsiveness before starting
-    nontarget_at_pre = session.probe_nontarget_at(via=control_via)
+    # C8: Probe the non-target link's AT responsiveness before starting (only
+    # when applicable; a UART non-target with absent host->device wiring is N/A).
+    nontarget_at_pre = (session.probe_nontarget_at(via=nontarget_link)
+                        if nontarget_probe_applicable else False)
 
     uart_start, cdc_start = session.uart.snapshot(), session.cdc.snapshot()
     session.command("AT+START", via=control_via, idempotent=False)
@@ -527,8 +546,10 @@ def _run_live(session: AcceptanceSession, target: str) -> dict[str, Any]:
             midstream_probed = True
             # N-5: cheap probe on the 50 ms polling hot path — no busy backoff
             # and a short cap so a transient hiccup cannot starve lag sampling.
-            nontarget_at_midstream = session.probe_nontarget_at(
-                via=control_via, timeout_s=0.5, busy_retries=0)
+            nontarget_at_midstream = (
+                session.probe_nontarget_at(via=nontarget_link, timeout_s=0.5,
+                                           busy_retries=0)
+                if nontarget_probe_applicable else False)
         try:
             current_state = session.state(via=control_via)
         except (TimeoutError, RuntimeError, OSError, ValueError):
@@ -594,14 +615,26 @@ def _run_live(session: AcceptanceSession, target: str) -> dict[str, Any]:
         post_stop_sensor_frames=post_stop_frames,
         nontarget_at_probe=nontarget_at_ok,
         handshake_inflight_frames=handshake_frames,
+        nontarget_at_probe_applicable=nontarget_probe_applicable,
     )
     types = {frame.message_type for frame in target_frames_list}
     uuids = {str(frame.device_uuid) for frame in target_frames_list}
     passed = (model.passed and types == _SENSOR_TYPES
               and uuids == {state_before["uuid"]})
+    target_frame_rate = (len(target_frames_list) / duration) if duration > 0 else 0.0
     return {"passed": passed, "acceptance": dataclasses.asdict(model),
             "sensor_types": sorted(item.name for item in types),
             "observed_uuids": sorted(uuids),
+            "control_link": control_via,
+            "nontarget_link": nontarget_link,
+            "nontarget_at_probe_applicable": nontarget_probe_applicable,
+            # 115200 newest-wins model: freshness evidence, NOT a pass/fail gate.
+            "freshness_diagnostics": {
+                "max_sequence_lag": max_lag,
+                "target_frames": len(target_frames_list),
+                "duration_s": duration,
+                "target_frame_rate": target_frame_rate,
+            },
             "nontarget_at_probe_pre_start": nontarget_at_pre,
             "nontarget_at_probe_midstream": nontarget_at_midstream,
             "control_poll_failures": poll_failures}
@@ -920,6 +953,16 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument("--uart-port")
     parser.add_argument("--uart-baud", type=int, default=115200)
     parser.add_argument("--duration", type=float, default=30.0)
+    parser.add_argument("--control-link", choices=("cdc", "uart"), default="cdc",
+                        help="control/polling link for live modes (default cdc); "
+                             "on the current bench host->device UART is absent "
+                             "so control must stay on CDC")
+    parser.add_argument("--uart-host-to-device-absent",
+                        action=argparse.BooleanOptionalAction, default=True,
+                        help="True (default) on the current bench: host->device "
+                             "UART is physically absent, so a UART non-target AT "
+                             "probe is N/A and does not fail the run; pass "
+                             "--no-uart-host-to-device-absent once UART TX is wired")
     parser.add_argument("--output", type=Path)
     arguments = parser.parse_args()
     if not arguments.list_ports:

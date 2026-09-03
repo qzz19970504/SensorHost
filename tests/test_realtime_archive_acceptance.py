@@ -1,5 +1,7 @@
 import argparse
+import time
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -11,7 +13,11 @@ from sensor_host.tools.realtime_archive_models import (
     UartExportAcceptance,
     sequence_lag,
 )
-from host.tools.realtime_archive_acceptance import AcceptanceSession, _parse_state
+from host.tools.realtime_archive_acceptance import (
+    AcceptanceSession,
+    PortReader,
+    _parse_state,
+)
 
 
 def test_state_parser_exposes_storage_readiness() -> None:
@@ -89,7 +95,6 @@ def test_live_acceptance_rejects_each_required_invariant() -> None:
         "live_target": "INVALID",
         "target_frames": 0,
         "nontarget_frames": 1,
-        "max_sequence_lag": 65,
         "target_crc_errors": 1,
         "nontarget_crc_errors": 1,
         "header_errors": 1,
@@ -114,6 +119,57 @@ def test_c7_cdc_target_requires_zero_live_drops() -> None:
     assert _live("CDC").passed
     assert not _live("CDC", drops_iis_delta=1).passed
     assert not _live("CDC", drops_jy_delta=1).passed
+
+
+def test_115200_uart_target_large_lag_is_diagnostic_not_a_failure() -> None:
+    """User-approved 115200 newest-wins model: a large routed-vs-completed lag is
+    a physical consequence of newest-wins backpressure at 115200, NOT a defect.
+    max_sequence_lag must no longer gate passed, yet it is still reported as
+    freshness evidence, and UART live-drops remain allowed."""
+    laggy = _live("UART", max_sequence_lag=5000, drops_iis_delta=120,
+                  drops_jy_delta=80)
+    assert laggy.passed
+    assert laggy.max_sequence_lag == 5000  # still recorded as evidence
+
+
+def test_115200_lag_not_gating_but_real_invariants_still_fail() -> None:
+    """Removing the lag gate must NOT weaken the real gates: a large lag alone
+    passes, but source_drop / CRC / physical-TX still fail the run."""
+    assert _live("UART", max_sequence_lag=9999).passed
+    assert not _live("UART", max_sequence_lag=9999, source_drop_delta=1).passed
+    assert not _live("UART", max_sequence_lag=9999, target_crc_errors=1).passed
+    assert not _live("UART", max_sequence_lag=9999,
+                     physical_tx_error_delta=1).passed
+
+
+def test_cdc_target_still_requires_zero_live_drop_under_large_lag() -> None:
+    """C7 unchanged: CDC (USB bandwidth sufficient) still requires zero live-drop
+    even though lag is no longer a gate."""
+    assert _live("CDC", max_sequence_lag=5000).passed
+    assert not _live("CDC", max_sequence_lag=5000, drops_iis_delta=1).passed
+    assert not _live("CDC", max_sequence_lag=5000, drops_jy_delta=1).passed
+
+
+def test_unidirectional_uart_nontarget_probe_na_does_not_fail() -> None:
+    """Unidirectional-UART bench: for a CDC data target the non-target link is
+    UART, whose host->device direction is physically absent, so the C8 AT probe
+    is N/A (nontarget_at_probe_applicable=False) and must NOT gate passed.  The
+    non-target link is still enforced silent via nontarget_frames==0."""
+    assert _live("CDC", nontarget_at_probe=False,
+                 nontarget_at_probe_applicable=False).passed
+    # ... but a non-silent UART non-target still fails (passive monitoring gate).
+    assert not _live("CDC", nontarget_at_probe=False,
+                     nontarget_at_probe_applicable=False,
+                     nontarget_frames=1).passed
+
+
+def test_nontarget_probe_still_gates_when_applicable() -> None:
+    """When the probe IS applicable (live-uart non-target CDC, or UART TX wired),
+    a failed non-target AT probe still fails the run."""
+    assert not _live("UART", nontarget_at_probe=False,
+                     nontarget_at_probe_applicable=True).passed
+    assert _live("UART", nontarget_at_probe=True,
+                 nontarget_at_probe_applicable=True).passed
 
 
 def test_c1_handshake_inflight_frame_is_not_a_post_stop_failure() -> None:
@@ -234,6 +290,66 @@ def test_w2_idempotent_command_still_backs_off_and_resends(tmp_path) -> None:
     with pytest.raises(RuntimeError, match="transiently busy"):
         session.command("AT+LIVESTREAM?", idempotent=True, busy_retries=1)
     assert len(port.writes) == 2  # initial send + 1 backoff re-send
+
+
+class _FakeSerialPort:
+    """Emulates a serial port the reader thread drains in uneven OS-like bursts."""
+
+    def __init__(self, chunks: list[bytes]) -> None:
+        self._chunks = list(chunks)
+
+    @property
+    def in_waiting(self) -> int:
+        return len(self._chunks[0]) if self._chunks else 0
+
+    def read(self, n: int = 1) -> bytes:
+        if self._chunks:
+            return self._chunks.pop(0)
+        time.sleep(0.005)  # avoid a hot spin once the queue is drained
+        return b""
+
+
+def _wait_reader(reader: PortReader, predicate, timeout_s: float = 3.0) -> bool:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if predicate(reader):
+            return True
+        time.sleep(0.01)
+    return False
+
+
+def test_uart_reader_thread_continuously_drains_without_changing_parse(tmp_path) -> None:
+    """The UART endpoint is drained by a dedicated PortReader background thread,
+    so the main thread polling CDC never blocks UART reads.  Feeding the shared
+    golden stream through that thread in uneven OS-like bursts must yield exactly
+    the same parse result as an in-order feed (no host-side byte loss / spurious
+    CRC), proving the reader thread does not alter parsing."""
+    repository_root = Path(__file__).resolve().parents[2]
+    stream = (repository_root / "test" / "golden"
+              / "stream_v1_frames.bin").read_bytes()
+    chunks = [stream[i:i + 7] for i in range(0, len(stream), 7)]
+    raw_path = tmp_path / "uart.sdf1"
+    reader = PortReader(_FakeSerialPort(chunks), raw_path, counters_only=False,
+                        decode_sensor_payload=True)
+    reader.start()
+    try:
+        assert _wait_reader(
+            reader,
+            lambda r: (r.snapshot()["sensor_frames"] >= 2
+                       and r.snapshot()["statuses"] >= 1
+                       and r.snapshot()["cli"] >= 1))
+        snapshot = reader.snapshot()
+        assert snapshot["sensor_frames"] == 2
+        assert snapshot["statuses"] == 1
+        assert snapshot["cli"] == 1
+        assert snapshot["parser"]["crc_errors"] == 0
+        assert snapshot["parser"]["header_errors"] == 0
+        assert snapshot["bytes"] == len(stream)
+    finally:
+        reader.stop()
+    assert reader.error is None
+    # Every drained byte was persisted to the raw capture.
+    assert raw_path.read_bytes() == stream
 
 
 def test_overwrite_requires_wrap_without_errors_and_bounded_stop() -> None:
