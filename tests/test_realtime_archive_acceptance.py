@@ -134,6 +134,13 @@ def test_c6_parser_flags_response_too_large() -> None:
         _parse_state("ERROR:RESPONSE_TOO_LARGE\r\n")
 
 
+def test_d2_parser_flags_tx_busy_as_transient_diagnostic() -> None:
+    """D2: ERROR:TX_BUSY (control buffer pool exhausted) is a transient
+    diagnostic, not a generic incomplete-response failure."""
+    with pytest.raises(ValueError, match="TX_BUSY"):
+        _parse_state("ERROR:TX_BUSY\r\n")
+
+
 def test_overwrite_requires_wrap_without_errors_and_bounded_stop() -> None:
     accepted = OverwriteAcceptance(
         duration_s=1800.0,

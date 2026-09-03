@@ -138,11 +138,18 @@ def _parse_state(text: str) -> dict[str, Any]:
 
     C5: FORMAT_REQUIRED=1 is a valid structured result, not an error.
     C6: ERROR:RESPONSE_TOO_LARGE is recognised as a diagnostic condition.
+    D2: ERROR:TX_BUSY (control buffer pool exhausted, counts command_error) is
+    recognised as a transient diagnostic rather than an incomplete response.
     """
     if "ERROR:RESPONSE_TOO_LARGE" in text:
         raise ValueError(
             "firmware returned ERROR:RESPONSE_TOO_LARGE — +STATE response "
             "exceeds internal buffer; reduce concurrent state complexity"
+        )
+    if "ERROR:TX_BUSY" in text:
+        raise ValueError(
+            "firmware returned ERROR:TX_BUSY — control buffer pool exhausted "
+            "(transient, counts command_error); back off and retry the query"
         )
     state_match = _STATE_PATTERN.search(text)
     uuid_match = _UUID_PATTERN.search(text)
@@ -236,12 +243,17 @@ class AcceptanceSession:
         self.cdc_port.close()
 
     def command(self, command: str, expected: str = "OK",
-                timeout_s: float = 3.0, via: str = "cdc") -> str:
+                timeout_s: float = 3.0, via: str = "cdc",
+                busy_retries: int = 3) -> str:
         """Send a command via the specified control link ('cdc' or 'uart').
 
         C8: During live modes, control/polling goes through the non-target link
         to avoid polluting the data link's frame statistics.
         C6: Recognises ERROR:RESPONSE_TOO_LARGE as a structured diagnostic.
+        D2/R5: ERROR:BUSY (e.g. AT+LIVESTREAM= while a live transfer is still
+        in flight in IDLE) and ERROR:TX_BUSY (control buffer pool exhausted,
+        counts command_error) are transient.  Back off and retry a bounded
+        number of times instead of treating them as a fatal RuntimeError.
         """
         assert self.cdc is not None and self.cdc_port is not None
         assert self.uart is not None and self.uart_port is not None
@@ -251,26 +263,41 @@ class AcceptanceSession:
         else:
             port = self.cdc_port
             reader = self.cdc
-        marker = reader.snapshot()["cli"]
         encoded = command.encode("ascii") + b"\r\n"
-        if port.write(encoded) != len(encoded):
-            raise OSError(f"short control write for {command} via {via}")
-        port.flush()
-        deadline = time.monotonic() + timeout_s
-        while time.monotonic() < deadline:
-            response = reader.cli_since(marker)
-            if expected in response:
-                return response
-            if "ERROR:RESPONSE_TOO_LARGE" in response:
-                raise ValueError(
-                    f"{command} via {via}: firmware buffer overflow "
-                    "(ERROR:RESPONSE_TOO_LARGE)")
-            if "ERROR:" in response:
-                raise RuntimeError(f"{command} via {via} returned {response.strip()}")
-            time.sleep(0.02)
-        raise TimeoutError(
-            f"timed out waiting for {command} via {via} response "
-            f"containing {expected!r}")
+        attempt = 0
+        while True:
+            marker = reader.snapshot()["cli"]
+            if port.write(encoded) != len(encoded):
+                raise OSError(f"short control write for {command} via {via}")
+            port.flush()
+            deadline = time.monotonic() + timeout_s
+            busy = False
+            while time.monotonic() < deadline:
+                response = reader.cli_since(marker)
+                if expected in response:
+                    return response
+                if "ERROR:RESPONSE_TOO_LARGE" in response:
+                    raise ValueError(
+                        f"{command} via {via}: firmware buffer overflow "
+                        "(ERROR:RESPONSE_TOO_LARGE)")
+                if "ERROR:BUSY" in response or "ERROR:TX_BUSY" in response:
+                    busy = True
+                    break
+                if "ERROR:" in response:
+                    raise RuntimeError(
+                        f"{command} via {via} returned {response.strip()}")
+                time.sleep(0.02)
+            if not busy:
+                raise TimeoutError(
+                    f"timed out waiting for {command} via {via} response "
+                    f"containing {expected!r}")
+            if attempt >= busy_retries:
+                raise RuntimeError(
+                    f"{command} via {via} stayed transiently busy "
+                    f"(ERROR:BUSY/ERROR:TX_BUSY) after {busy_retries} "
+                    f"backoff retries")
+            time.sleep(0.5 * (2 ** attempt))
+            attempt += 1
 
     def state(self, via: str = "cdc") -> dict[str, Any]:
         return _parse_state(self.command("AT+STATE?", "+STATE:", via=via))
@@ -396,20 +423,43 @@ def _run_live(session: AcceptanceSession, target: str) -> dict[str, Any]:
     status_before = session.status(via=control_via)
 
     # C8: Probe non-target link AT responsiveness before starting
-    nontarget_at_ok = session.probe_nontarget_at(via=control_via)
+    nontarget_at_pre = session.probe_nontarget_at(via=control_via)
 
     uart_start, cdc_start = session.uart.snapshot(), session.cdc.snapshot()
     session.command("AT+START", via=control_via)
 
-    # C2: After SDCLEAR, sequence baseline is reset; poll lag from state
+    # C2: After SDCLEAR, sequence baseline is reset; poll lag from state.
+    # MN-3: probe the non-target link a second time at ~50% of the duration and
+    # merge both probes into the nontarget_at_probe gate; a 50 ms poll that
+    # transiently fails (e.g. ERROR:BUSY / timeout) is captured and degrades the
+    # probe to False instead of aborting the whole round with TimeoutError.
     max_lag = 0
-    deadline = time.monotonic() + session.arguments.duration
+    poll_failures = 0
+    midstream_probed = False
+    nontarget_at_midstream = True
+    duration = session.arguments.duration
+    started = time.monotonic()
+    deadline = started + duration
+    midstream_mark = started + duration * 0.5
     while time.monotonic() < deadline:
-        current_state = session.state(via=control_via)
+        if not midstream_probed and time.monotonic() >= midstream_mark:
+            midstream_probed = True
+            nontarget_at_midstream = session.probe_nontarget_at(via=control_via)
+        try:
+            current_state = session.state(via=control_via)
+        except (TimeoutError, RuntimeError, OSError, ValueError):
+            poll_failures += 1
+            time.sleep(0.05)
+            continue
         lag = sequence_lag(current_state["last_routed_sequence"],
                            current_state["last_completed_sequence"])
         max_lag = max(max_lag, lag)
         time.sleep(0.05)
+
+    # MN-3: merge pre-START and mid-stream probes; unreliable polling means the
+    # non-target control link was not provably responsive throughout the run.
+    nontarget_at_ok = (nontarget_at_pre and nontarget_at_midstream
+                       and poll_failures == 0)
 
     state_during = session.state(via=control_via)
     status_after = session.status(via=control_via)
@@ -463,7 +513,10 @@ def _run_live(session: AcceptanceSession, target: str) -> dict[str, Any]:
               and uuids == {state_before["uuid"]})
     return {"passed": passed, "acceptance": dataclasses.asdict(model),
             "sensor_types": sorted(item.name for item in types),
-            "observed_uuids": sorted(uuids)}
+            "observed_uuids": sorted(uuids),
+            "nontarget_at_probe_pre_start": nontarget_at_pre,
+            "nontarget_at_probe_midstream": nontarget_at_midstream,
+            "control_poll_failures": poll_failures}
 
 
 def _run_overwrite(session: AcceptanceSession) -> dict[str, Any]:
@@ -500,77 +553,140 @@ def _run_overwrite(session: AcceptanceSession) -> dict[str, Any]:
 
 
 def _run_uuid_persistence(session: AcceptanceSession) -> dict[str, Any]:
-    """Verify UUID derivation stability, CONFIGURED persistence, baud and
-    LIVESTREAM cold-boot defaults across a power cycle.
+    """Three-phase UUID derivation/persistence acceptance across TWO cold boots.
 
-    Workflow:
-    1. Read current state: uuid, uuid_source, baud, livestream target.
-    2. If uuid_source==DERIVED: write the same UUID via AT+UUID=<derived>,
-       set LIVESTREAM=CDC, prompt user to power-cycle and re-run.
-    3. If uuid_source==CONFIGURED (post-reboot): assert baud unchanged,
-       livestream reverted to UART (volatile), uuid stable.
+    MJ-E: Goal evidence item 6 requires that the *derived* UUID is stable across
+    two cold boots (derivation-algorithm determinism).  That is only provable if
+    phase 1 does NOT write the UUID; writing it immediately would make phase 2
+    compare a persisted value rather than a freshly re-derived one.
+
+    Phase 1 (record):     uuid_source==DERIVED and no baseline -> record the
+                          derived UUID + baud (+ generated_utc/uptime_us) to the
+                          baseline and prompt a power cycle.  DO NOT write UUID.
+    Phase 2 (derived):    still DERIVED with a baseline -> assert UUID and baud
+                          match the baseline across the cold boot (evidence 6),
+                          record phase-2 generated_utc/uptime_us, THEN write
+                          AT+UUID=<derived> and AT+LIVESTREAM=CDC and prompt a
+                          second power cycle.
+    Phase 3 (configured): CONFIGURED with a baseline -> assert uuid_configured,
+                          baud_stable and livestream_reverted_to_uart (evidence
+                          7/8).  On success consume/clean the baseline (MN-2).
+
+    Both cold boots are evidenced by generated_utc and uptime_us (uptime resets
+    to a small value after a real power cycle).
     """
     state = session.state()
+    status = session.status()
     livestream_reply = session.command("AT+LIVESTREAM?", "+LIVESTREAM:")
     livestream_match = _LIVESTREAM_PATTERN.search(livestream_reply)
     livestream_target = livestream_match.group(1) if livestream_match else ""
     baud_reply = session.command("AT+BAUD?", "+BAUD:")
     baud_match = _BAUD_PATTERN.search(baud_reply)
     current_baud = int(baud_match.group(1)) if baud_match else 0
+    generated_utc = datetime.now(timezone.utc).isoformat()
+    uptime_us = int(getattr(status, "uptime_us", 0)) if status is not None else 0
 
     baseline_path = session.arguments.output.with_suffix(".uuid_baseline.json")
     baseline: dict[str, Any] | None = None
     if baseline_path.exists():
         baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
 
+    def _write_baseline(data: dict[str, Any]) -> None:
+        baseline_path.parent.mkdir(parents=True, exist_ok=True)
+        baseline_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
     if state["uuid_source"] == "DERIVED" and baseline is None:
-        # First run: record baseline, set UUID and LIVESTREAM=CDC for reboot test
-        derived_uuid = state["uuid"]
-        session.command(f"AT+UUID={derived_uuid}")
+        # Phase 1: record derived UUID/baud only; never write the UUID here so
+        # phase 2 can prove the derivation is stable across a cold boot.
+        baseline_data = {
+            "uuid": state["uuid"],
+            "baud": current_baud,
+            "phase1": {"generated_utc": generated_utc, "uptime_us": uptime_us},
+        }
+        _write_baseline(baseline_data)
+        return {
+            "passed": True,
+            "phase": "record",
+            "evidence": [],
+            "instruction": "已记录派生 UUID 与 baud 到 baseline（未写入 UUID）。"
+                           "请给设备完全断电再上电（冷启动），然后重新运行 "
+                           "--mode uuid-persistence 进入阶段2。",
+            "baseline": baseline_data,
+            "state": state,
+        }
+
+    if state["uuid_source"] == "DERIVED" and baseline is not None:
+        # Phase 2: still DERIVED after a cold boot -> derivation determinism.
+        uuid_stable = state["uuid"] == baseline["uuid"]
+        baud_stable = current_baud == baseline["baud"]
+        baseline["phase2"] = {"generated_utc": generated_utc,
+                              "uptime_us": uptime_us}
+        if not (uuid_stable and baud_stable):
+            _write_baseline(baseline)
+            return {
+                "passed": False,
+                "phase": "derived",
+                "evidence": [],
+                "uuid_stable_across_cold_boot": uuid_stable,
+                "baud_stable_across_cold_boot": baud_stable,
+                "reason": "派生 UUID 或 baud 跨冷启动不一致（证据项6失败）",
+                "baseline": baseline,
+                "state": state,
+            }
+        # Derivation proven stable across the cold boot; now persist it and
+        # select CDC so phase 3 can verify CONFIGURED + LIVESTREAM revert.
+        session.command(f"AT+UUID={state['uuid']}")
         session.command("AT+LIVESTREAM=CDC")
         verify = session.state()
-        baseline_data = {
-            "uuid": derived_uuid,
-            "baud": current_baud,
-            "livestream_before_reboot": verify["live_target"],
-        }
-        baseline_path.parent.mkdir(parents=True, exist_ok=True)
-        baseline_path.write_text(json.dumps(baseline_data, indent=2), encoding="utf-8")
+        _write_baseline(baseline)
         return {
             "passed": verify["uuid_source"] == "CONFIGURED"
                       and verify["live_target"] == "CDC",
-            "phase": "setup",
-            "instruction": "Power-cycle the device, then re-run --mode uuid-persistence",
-            "baseline": baseline_data,
+            "phase": "derived",
+            "evidence": ["6:两次冷启动派生UUID稳定"],
+            "uuid_stable_across_cold_boot": uuid_stable,
+            "baud_stable_across_cold_boot": baud_stable,
+            "instruction": "已验证派生 UUID 跨冷启动稳定（证据项6），并写入 "
+                           "AT+UUID + AT+LIVESTREAM=CDC。请再次完全断电再上电，"
+                           "然后重新运行 --mode uuid-persistence 进入阶段3。",
+            "baseline": baseline,
             "state": verify,
         }
-    elif baseline is not None:
-        # Post-reboot verification
+
+    if state["uuid_source"] == "CONFIGURED" and baseline is not None:
+        # Phase 3: persisted CONFIGURED across the second cold boot.
         uuid_stable = state["uuid"] == baseline["uuid"]
         baud_stable = current_baud == baseline["baud"]
-        livestream_reverted = livestream_target == "UART"  # volatile, cold-boot default
+        livestream_reverted = livestream_target == "UART"  # volatile cold-boot default
         configured = state["uuid_source"] == "CONFIGURED"
         passed = uuid_stable and baud_stable and livestream_reverted and configured
-        return {
+        result = {
             "passed": passed,
-            "phase": "verify",
+            "phase": "configured",
+            "evidence": (["7:设置UUID后冷启动仍CONFIGURED且波特率不变",
+                          "8:LIVESTREAM=CDC后冷启动恢复UART"] if passed else []),
+            "uuid_configured": configured,
             "uuid_stable": uuid_stable,
             "baud_stable": baud_stable,
             "livestream_reverted_to_uart": livestream_reverted,
-            "uuid_configured": configured,
             "baseline": baseline,
+            "phase3": {"generated_utc": generated_utc, "uptime_us": uptime_us},
             "state": state,
         }
-    else:
-        # Already CONFIGURED without baseline — just verify defaults
-        passed = (livestream_target == "UART" and state["state"] == "IDLE")
-        return {
-            "passed": passed,
-            "phase": "check",
-            "state": state,
-            "livestream": livestream_target,
-            "baud": current_baud,
-        }
+        if passed:
+            # MN-2: consume the baseline so a re-run cannot reuse a stale base.
+            baseline_path.unlink(missing_ok=True)
+            result["baseline_consumed"] = True
+        return result
+
+    # Fallback: already CONFIGURED without a baseline — just verify defaults.
+    return {
+        "passed": livestream_target == "UART" and state["state"] == "IDLE",
+        "phase": "check",
+        "state": state,
+        "livestream": livestream_target,
+        "baud": current_baud,
+    }
 
 
 def _export_model(session: AcceptanceSession, target: str,
