@@ -122,7 +122,7 @@ AT+SDCLEAR=CONFIRM
 acq watermark 128|256|511
 ```
 
-解析器限制单行长度、参数个数和十进制溢出。错误返回 `ERROR:<reason>` 并增加 `command_errors`。回复固定走命令来源链路。`acq start|stop`、`status` 和 watermark 作为兼容别名保留；`transport cdc|uart` 返回 `ERROR:UNSUPPORTED`。状态查询（`AT+STATE?`）的发送降级分两类：格式化超出 CLI 预算返回 `ERROR:RESPONSE_TOO_LARGE`；控制缓冲池耗尽返回 `ERROR:TX_BUSY`（计 `command_errors`）。两者均为可诊断错误，主机应退避重试而非笼统失败。
+解析器限制单行长度、参数个数和十进制溢出。错误返回 `ERROR:<reason>` 并增加 `command_errors`。回复固定走命令来源链路。`acq start|stop`、`status` 和 watermark 作为兼容别名保留；`transport cdc|uart` 返回 `ERROR:UNSUPPORTED`。状态查询（`AT+STATE?`）的发送降级分两类：格式化超出 CLI 预算返回 `ERROR:RESPONSE_TOO_LARGE`；控制缓冲池耗尽时固件尽力返回 `ERROR:TX_BUSY`（计 `command_errors`），但该回复本身同样需要缓冲，主导失败模式下主机通常只观察到响应超时（详见 §6.1）。对幂等状态查询应退避重试而非笼统失败。
 
 ### 6.1 AT+LIVESTREAM
 
@@ -136,7 +136,7 @@ acq watermark 128|256|511
 - 无效目标（非 UART/CDC、非大写）：`ERROR:ARGUMENT`
 - IDLE 但仍有在途实时传输：`ERROR:BUSY`（瞬态；主机应退避后有限次重试，不得立即当致命错误抛 `RuntimeError`）
 - 状态响应格式化超出 CLI 预算：`ERROR:RESPONSE_TOO_LARGE`（主机以 `ValueError` 结构化诊断）
-- 控制缓冲池耗尽/发送降级：`ERROR:TX_BUSY`（瞬态，计 `command_errors`；主机与 `ERROR:BUSY` 同等退避重试，不落入笼统 `RuntimeError`/`TimeoutError`）
+- 控制缓冲池耗尽/发送降级：固件**尽力**回复 `ERROR:TX_BUSY`（计 `command_errors`），但该回复本身同样需要控制缓冲；主导失败模式下主机通常观察到**响应超时**并伴随 `command_errors` 增量，未必能收到 `ERROR:TX_BUSY` 文本。主机应以「响应超时 + `command_errors` 增量」作为该条件的判据，不要假定一定能收到 `ERROR:TX_BUSY`。对幂等查询（`AT+STATE?` / `AT+LIVESTREAM?` 等）可退避重试；对非幂等命令（`AT+STOP` / `AT+START` / `AT+SDCLEAR` / `AT+EXPORT`）**不得重发**——命令已执行、重发会被拒为 `ERROR:STATE`（对应主机 `command(idempotent=False)`）。
 
 冷启动默认 UART，设置不持久化（掉电后恢复 UART）。实时副本只发送到选定目标；非目标链路仍收发 AT 控制响应，但不接收主动传感器帧。CDC 被选中但主机未连接时，不自动回退 UART。
 
@@ -173,7 +173,7 @@ live-drop 门限按目标区分（关键差异）：
 
 当前固件没有 ACK、UART 软件 credit 或 RTS/CTS。实时流使用在途帧不可覆盖的双槽丢旧保新队列，只发送到 `AT+LIVESTREAM` 选定的唯一目标。CDC 被选中但未连接时不自动回退 UART。任一实时链路启动失败、DMA 错误或拥塞只丢实时副本并累计共享的按数据源 drop 计数（DROPS_IIS/DROPS_JY），SD 所有权不受影响。完成事件只证明字节离开 STM32，不等价于 PC/ESP32 应用层持久化确认。
 
-设备上电为 IDLE；`AT+START` 进入 ACQUIRE，`AT+STOP` 进入 STOPPING，同时触发 SD flush 与 Live quiesce。仅当 STORAGE_FLUSHED 与 LIVE_QUIESCED 两事件都到达（任意顺序）才进 IDLE 并在原命令来源返回 OK。Live 侧丢弃并统计待发实时副本、等待唯一在途帧完成。STOP 不上传历史。SD V2 使用 block 0/1 交替超级块，block 2～7 保留，block 8 起为 8 sector/4096 字节环形 chunk。介质满时覆盖最旧 chunk，累计 `OVERWRITTEN_CHUNKS/FRAMES`，采集保持 ACQUIRE。
+设备上电为 IDLE；`AT+START` 进入 ACQUIRE，`AT+STOP` 进入 STOPPING，同时触发 SD flush 与 Live quiesce。仅当 STORAGE_FLUSHED 与 LIVE_QUIESCED 两事件都到达（任意顺序）才进 IDLE 并在原命令来源返回 OK。Live 侧丢弃并统计待发实时副本、等待唯一在途帧完成。STOP 不上传历史。进入 IDLE 后设备保证不再主动发送传感器帧（固件 live 抑制闩锁），该保证只由下一次 `AT+START` 解除；`AT+EXPORT` 的历史帧不受此约束。SD V2 使用 block 0/1 交替超级块，block 2～7 保留，block 8 起为 8 sector/4096 字节环形 chunk。介质满时覆盖最旧 chunk，累计 `OVERWRITTEN_CHUNKS/FRAMES`，采集保持 ACQUIRE。
 
 IDLE 下 `AT+EXPORT=UART|CDC` 进入 EXPORT，从最旧 chunk 开始发送；命令来源端返回 `EXPORT_BEGIN` 和 OK，完成返回 `EXPORT_END:CHUNKS=n,FRAMES=n`，空存档返回 `EXPORT_EMPTY`。目标链路错误、START、STOP 或掉电会中止并保留当前 chunk，返回 `EXPORT_ABORTED`；重新导出从该 chunk 第一帧开始，允许最多重复一个 chunk，不能漏帧。UART 与 CDC 导出目标严格隔离，CDC 导出时 CLI_RESPONSE 可与历史帧交错。
 
