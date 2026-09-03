@@ -100,7 +100,7 @@ payload 固定 64 字节、`item_count=1`：
 | 54 | u16 | reserved=`0` |
 | 56 | u64 | uptime_us |
 
-计数器饱和于 `UINT32_MAX`。`source_drops` 包括无空闲帧、存储入口已满、SD 写入失败或裸扇区队列已满；`transport_drops` 包括发送切换、中止及传输队列/小缓冲失败。偏移 8 不再表示可用流控额度，接收端必须忽略其数值。
+计数器饱和于 `UINT32_MAX`。`source_drops` 包括无空闲帧、存储入口已满、SD 写入失败或裸扇区队列已满；`transport_drops`（偏移 24）保持 V1 兼容语义，只统计物理传输侧的发送切换、中止及传输队列/小缓冲失败，正常实时运行不因丢旧保新淘汰或 STOP quiesce 丢弃待发副本而自增——这两类实时丢弃按数据源计入 `+LIVE` 行的 `DROPS_IIS`/`DROPS_JY`。因此正常负载下 `transport_drops` 的验收增量应为 0。偏移 8 不再表示可用流控额度，接收端必须忽略其数值。
 
 ## 6. CLI_RESPONSE（type=4）
 
@@ -137,6 +137,8 @@ acq watermark 128|256|511
 
 冷启动默认 UART，设置不持久化（掉电后恢复 UART）。实时副本只发送到选定目标；非目标链路仍收发 AT 控制响应，但不接收主动传感器帧。CDC 被选中但主机未连接时，不自动回退 UART。
 
+> 移除声明：本次移除尚未发布的 `AT+CDCSTREAM?` / `AT+CDCSTREAM=ON` / `AT+CDCSTREAM=OFF` 与 `DRAIN` 状态，实时目标改由 `AT+LIVESTREAM` 显式互斥选择；向固件发送这些已移除命令返回 `ERROR:ARGUMENT`。
+
 `AT+STATE?` 的 `+SD` 行同时返回 `READY=0|1` 和 `FORMAT_REQUIRED=0|1`。恢复扫描完成并可接受采集、清理或导出请求后 `READY=1`；介质需要显式格式化时 `FORMAT_REQUIRED=1`。上位机在开始验收或采集前必须等待 `READY=1`。
 
 `AT+STATE?` 的 `+LIVE` 行返回实时流状态：
@@ -150,6 +152,17 @@ acq watermark 128|256|511
 - `LAST_ROUTED_SEQUENCE`：Router 最近分配给实时候选的序号。
 - `LAST_COMPLETED_SEQUENCE`：Scheduler 最近完成物理发送的序号。
 - 主机按无符号 32-bit 环绕差计算滞后（routed - completed），验收要求滞后不持续 > 64 帧。
+
+### 6.2 实时验收门限（live-uart / live-cdc）
+
+`host/tools/realtime_archive_acceptance.py --mode live-uart|live-cdc` 使用 `LiveAcceptance` 模型判定，两种目标共享的门限为：目标链路有传感器帧、非目标链路主动传感器帧为 0、`max_sequence_lag<=64`、CRC/header/length/payload 错误为 0、物理发送错误（UART 目标看 `uart_dma_errors`、CDC 目标看 `cdc_errors`）增量为 0、`source_drop` 增量为 0、STOP→OK 耗时 ≤2 s、STOP OK 后新增主动传感器帧为 0、非目标链路 `AT`/`AT+STATE?` 探测成功。
+
+live-drop 门限按目标区分（关键差异）：
+
+- **CDC 目标**：要求 `DROPS_IIS` 与 `DROPS_JY` 增量均为 0（正常负载下 CDC 无损）。
+- **UART 目标**：允许实时丢旧保新，`DROPS_IIS`/`DROPS_JY` 增量可为正而不判失败；UART 目标只由上面的共享门限（尤其 `source_drop=0`、协议/物理错误为 0、滞后 ≤64）约束。
+
+控制与 50 ms 轮询始终经非目标链路发送（live-uart 走 CDC、live-cdc 走 UART），避免与数据链路争用污染帧统计与 live-drop。
 
 ## 7. SD 持久存档、实时分流与历史导出
 
