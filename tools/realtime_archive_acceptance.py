@@ -37,7 +37,8 @@ _UUID_PATTERN = re.compile(
 _SD_PATTERN = re.compile(
     r"\+SD:USED=(\d+),CAPACITY=(\d+),PENDING_FRAMES=(\d+),"
     r"RETAINED_CHUNKS=(\d+),RETAINED_FRAMES=(\d+),"
-    r"OVERWRITTEN_CHUNKS=(\d+),OVERWRITTEN_FRAMES=(\d+)"
+    r"OVERWRITTEN_CHUNKS=(\d+),OVERWRITTEN_FRAMES=(\d+),"
+    r"READY=([01]),FORMAT_REQUIRED=([01])"
 )
 _LIVE_DROP_PATTERN = re.compile(
     r"\+LIVE_DROPS:UART_IIS=(\d+),UART_JY=(\d+),CDC=(\d+)"
@@ -148,6 +149,8 @@ def _parse_state(text: str) -> dict[str, Any]:
         "retained_frames": sd[4],
         "overwritten_chunks": sd[5],
         "overwritten_frames": sd[6],
+        "sd_ready": bool(sd[7]),
+        "sd_format_required": bool(sd[8]),
         "uart_iis_live_drops": drops[0],
         "uart_jy_live_drops": drops[1],
         "cdc_live_drops": drops[2],
@@ -203,6 +206,10 @@ class AcceptanceSession:
                                decode_sensor_payload=not lightweight)
         self.cdc.start()
         self.uart.start()
+        # Windows may finish CDC line-state negotiation just after pyserial
+        # opens the port.  A command written in that window can be accepted by
+        # the host API but never reach the device OUT endpoint.
+        time.sleep(0.25)
         return self
 
     def __exit__(self, *_: object) -> None:
@@ -221,9 +228,16 @@ class AcceptanceSession:
         if self.cdc_port.write(encoded) != len(encoded):
             raise OSError(f"short control write for {command}")
         self.cdc_port.flush()
-        _wait_until(lambda: expected in self.cdc.cli_since(marker), timeout_s,
-                    f"{command} response containing {expected!r}")
-        return self.cdc.cli_since(marker)
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            response = self.cdc.cli_since(marker)
+            if expected in response:
+                return response
+            if "ERROR:" in response:
+                raise RuntimeError(f"{command} returned {response.strip()}")
+            time.sleep(0.02)
+        raise TimeoutError(
+            f"timed out waiting for {command} response containing {expected!r}")
 
     def state(self) -> dict[str, Any]:
         return _parse_state(self.command("AT+STATE?", "+STATE:"))
@@ -268,11 +282,19 @@ def _parser_delta(end: dict[str, Any], start: dict[str, Any], name: str) -> int:
 
 def _run_preflight(session: AcceptanceSession) -> dict[str, Any]:
     state = session.state()
+    deadline = time.monotonic() + max(30.0, session.arguments.duration)
+    while not state["sd_ready"] and time.monotonic() < deadline:
+        if state["sd_format_required"]:
+            break
+        time.sleep(1.0)
+        state = session.state()
     cdc_stream = session.command("AT+CDCSTREAM?", "+CDCSTREAM:")
     uuid_reply = session.command("AT+UUID?", "+UUID:")
     status = session.status()
     passed = (
         state["state"] == "IDLE"
+        and state["sd_ready"]
+        and not state["sd_format_required"]
         and "+CDCSTREAM:OFF" in cdc_stream
         and state["uuid"] in uuid_reply.lower()
         and status is not None

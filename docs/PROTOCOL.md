@@ -124,6 +124,8 @@ acq watermark 128|256|511
 
 解析器限制单行长度、参数个数和十进制溢出。错误返回 `ERROR:<reason>` 并增加 `command_errors`。回复固定走命令来源链路。`acq start|stop`、`status` 和 watermark 作为兼容别名保留；`transport cdc|uart` 返回 `ERROR:UNSUPPORTED`。
 
+`AT+STATE?` 的 `+SD` 行同时返回 `READY=0|1` 和 `FORMAT_REQUIRED=0|1`。恢复扫描完成并可接受采集、清理或导出请求后 `READY=1`；介质需要显式格式化时 `FORMAT_REQUIRED=1`。上位机在开始验收或采集前必须等待 `READY=1`。
+
 ## 7. SD 持久存档、实时分流与历史导出
 
 当前固件没有 ACK、UART 软件 credit 或 RTS/CTS。实时 UART 使用在途帧不可覆盖的双槽丢旧保新队列；CDC_STREAM 冷启动默认为 OFF，显式开启后使用独立队列。任一实时链路启动失败、DMA 错误或拥塞只丢实时副本并累计链路计数，SD 所有权不受影响。完成事件只证明字节离开 STM32，不等价于 PC/ESP32 应用层持久化确认。

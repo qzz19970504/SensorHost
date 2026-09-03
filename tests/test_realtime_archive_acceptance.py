@@ -7,6 +7,20 @@ from sensor_host.tools.realtime_archive_models import (
     OverwriteAcceptance,
     UartExportAcceptance,
 )
+from host.tools.realtime_archive_acceptance import _parse_state
+
+
+def test_state_parser_exposes_storage_readiness() -> None:
+    parsed = _parse_state(
+        "+STATE:IDLE\r\n"
+        "+UUID:550e8400-e29b-41d4-a716-446655440000,SOURCE=DERIVED\r\n"
+        "+SD:USED=0,CAPACITY=100,PENDING_FRAMES=0,RETAINED_CHUNKS=0,"
+        "RETAINED_FRAMES=0,OVERWRITTEN_CHUNKS=0,OVERWRITTEN_FRAMES=0,"
+        "READY=1,FORMAT_REQUIRED=0\r\n"
+        "+LIVE_DROPS:UART_IIS=0,UART_JY=0,CDC=0\r\nOK\r\n"
+    )
+    assert parsed["sd_ready"] is True
+    assert parsed["sd_format_required"] is False
 
 
 def test_live_acceptance_rejects_each_required_invariant() -> None:
