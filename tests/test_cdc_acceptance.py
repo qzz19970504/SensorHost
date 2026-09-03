@@ -1,4 +1,5 @@
 from sensor_host.tools.acceptance_models import AcceptanceReport
+from sensor_host.tools.realtime_archive_models import LiveAcceptance
 
 import struct
 import zlib
@@ -85,3 +86,74 @@ def test_acceptance_report_requires_lossless_recording() -> None:
     )
 
     assert not report.passed
+
+
+def test_status_v1_offset32_and_offset36_decode() -> None:
+    """D1 guard: offset32 decodes as uart_dma_errors, offset36 as cdc_errors.
+
+    The CDC physical-TX gate reads cdc_errors (offset36).  Before this round the
+    firmware left it permanently 0, so the gate was a silent always-true.  This
+    proves the decode chain surfaces non-zero offset32/offset36 values.
+    """
+    payload = bytearray(64)
+    payload[0] = 1  # status_version
+    struct.pack_into("<I", payload, 32, 5)  # uart_dma_errors
+    struct.pack_into("<I", payload, 36, 9)  # cdc_errors
+
+    parser = StreamParser()
+    frames = parser.feed(_status_frame(bytes(payload)))
+
+    assert len(frames) == 1
+    status = frames[0].status
+    assert status is not None
+    assert status.status_version == 1
+    assert status.uart_dma_errors == 5
+    assert status.cdc_errors == 9
+
+
+def _cdc_live(physical_tx_error_delta: int) -> LiveAcceptance:
+    """A otherwise-passing CDC LiveAcceptance with the given offset36 delta."""
+    return LiveAcceptance(
+        live_target="CDC",
+        target_frames=200,
+        nontarget_frames=0,
+        max_sequence_lag=8,
+        target_crc_errors=0,
+        nontarget_crc_errors=0,
+        header_errors=0,
+        length_errors=0,
+        payload_errors=0,
+        physical_tx_error_delta=physical_tx_error_delta,
+        drops_iis_delta=0,
+        drops_jy_delta=0,
+        source_drop_delta=0,
+        stop_latency_s=0.5,
+        post_stop_sensor_frames=0,
+        nontarget_at_probe=True,
+    )
+
+
+def test_cdc_physical_tx_gate_rejects_nonzero_offset36_delta() -> None:
+    """MJ-D guard: a non-zero cdc_errors (offset36) delta must fail the CDC gate.
+
+    End-to-end: decode two STATUS frames whose offset36 differs, derive
+    physical_tx_error_delta exactly as the acceptance tool does for a CDC target,
+    and assert the LiveAcceptance gate rejects it.  With offset36 equal the gate
+    passes, proving the threshold is genuinely sensitive to cdc_errors rather
+    than silently always-true (the pre-fix firmware left offset36 at 0).
+    """
+    def _cdc_errors(value: int) -> int:
+        payload = bytearray(64)
+        payload[0] = 1
+        struct.pack_into("<I", payload, 36, value)
+        frames = StreamParser().feed(_status_frame(bytes(payload)))
+        status = frames[0].status
+        assert status is not None
+        return status.cdc_errors
+
+    before = _cdc_errors(3)
+    after = _cdc_errors(6)
+    delta = after - before  # mirrors the realtime_archive_acceptance CDC path
+    assert delta == 3
+    assert not _cdc_live(delta).passed
+    assert _cdc_live(0).passed

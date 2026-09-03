@@ -31,7 +31,8 @@ class LiveAcceptance:
     header_errors: int  # parser header_errors delta on target link
     length_errors: int  # parser length_errors delta on target link
     payload_errors: int  # parser payload_errors delta on target link
-    physical_tx_error_delta: int  # uart_dma_errors (UART) or cdc_errors (CDC)
+    physical_tx_error_delta: int  # D1: UART target=offset32 uart_dma_errors,
+    #                                  CDC target=offset36 cdc_errors (delta)
     drops_iis_delta: int  # shared IIS live-drop increment (snapshot diff)
     drops_jy_delta: int  # shared JY live-drop increment (snapshot diff)
     source_drop_delta: int
