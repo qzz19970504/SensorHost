@@ -5,26 +5,39 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
+def sequence_lag(routed: int, completed: int) -> int:
+    """Unsigned 32-bit wraparound difference: routed - completed."""
+    return (routed - completed) & 0xFFFFFFFF
+
+
 @dataclass(frozen=True)
 class LiveAcceptance:
-    uart_frames: int
-    cdc_frames: int
-    uart_max_sequence_lag: int
-    uart_crc_errors: int
-    cdc_crc_errors: int
-    cdc_live_drop_delta: int
+    """Single-target live streaming acceptance (UART or CDC selected)."""
+
+    live_target: str  # "UART" or "CDC"
+    target_frames: int  # sensor frames on the selected link
+    nontarget_frames: int  # sensor frames on the non-selected link (must be 0)
+    max_sequence_lag: int  # max(routed - completed) observed, unsigned 32-bit
+    target_crc_errors: int
+    nontarget_crc_errors: int
+    drops_iis_delta: int  # shared IIS live-drop increment (snapshot diff)
+    drops_jy_delta: int  # shared JY live-drop increment (snapshot diff)
     source_drop_delta: int
+    stop_latency_s: float  # STOP dual-completion latency
 
     @property
     def passed(self) -> bool:
         return (
-            self.uart_frames > 0
-            and self.cdc_frames > 0
-            and self.uart_max_sequence_lag <= 64
-            and self.uart_crc_errors == 0
-            and self.cdc_crc_errors == 0
-            and self.cdc_live_drop_delta == 0
+            self.live_target in ("UART", "CDC")
+            and self.target_frames > 0
+            and self.nontarget_frames == 0
+            and self.max_sequence_lag <= 64
+            and self.target_crc_errors == 0
+            and self.nontarget_crc_errors == 0
+            and self.drops_iis_delta == 0
+            and self.drops_jy_delta == 0
             and self.source_drop_delta == 0
+            and 0.0 <= self.stop_latency_s <= 2.0
         )
 
 

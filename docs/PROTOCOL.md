@@ -2,7 +2,7 @@
 
 ## 1. 传输模型
 
-STM32 在 CDC 与 UART2 上使用同一种 SDF1 二进制帧。IIS3DWB 与 JY61P 在统一分流点分配 UUID、全局 sequence、时间戳并重算 CRC；原始 SDF v2 帧独立写入固定 4 KiB `SDB2` chunk，UART 和可选 CDC 各自接收实时副本。实时链路允许丢旧保新，拥塞只增加对应链路计数，不影响 SD 权威存档。历史帧不会随 STOP 自动发送，必须使用 `AT+EXPORT=UART|CDC` 显式上传；导出副本才设置 `ARCHIVE_EXPORT`。
+STM32 在 CDC 与 UART2 上使用同一种 SDF1 二进制帧。IIS3DWB 与 JY61P 在统一分流点分配 UUID、全局 sequence、时间戳并重算 CRC；原始 SDF v2 帧独立写入固定 4 KiB `SDB2` chunk，实时副本只发送到 `AT+LIVESTREAM` 选定的唯一目标链路（UART 或 CDC，冷启动默认 UART）。非目标链路不发送主动传感器帧，但仍能收发 AT 控制响应。实时链路允许丢旧保新，拥塞只增加共享的按数据源 live-drop 计数，不影响 SD 权威存档。历史帧不会随 STOP 自动发送，必须使用 `AT+EXPORT=UART|CDC` 显式上传；导出副本才设置 `ARCHIVE_EXPORT`。
 
 多字节整数均为小端。UART2 上电默认 115200、8N1、无 RTS/CTS，可在 IDLE 持久化设置 9600～3000000；2/3 Mbaud 适合高吞吐排空。CDC 的波特率设置不影响 USB 实际传输。
 
@@ -115,8 +115,8 @@ AT+BAUD?
 AT+BAUD=<9600..3000000>
 AT+UUID?
 AT+UUID=<canonical-uuid>
-AT+CDCSTREAM?
-AT+CDCSTREAM=ON|OFF
+AT+LIVESTREAM?
+AT+LIVESTREAM=UART|CDC
 AT+EXPORT[=UART|CDC]
 AT+SDCLEAR=CONFIRM
 acq watermark 128|256|511
@@ -124,13 +124,38 @@ acq watermark 128|256|511
 
 解析器限制单行长度、参数个数和十进制溢出。错误返回 `ERROR:<reason>` 并增加 `command_errors`。回复固定走命令来源链路。`acq start|stop`、`status` 和 watermark 作为兼容别名保留；`transport cdc|uart` 返回 `ERROR:UNSUPPORTED`。
 
+### 6.1 AT+LIVESTREAM
+
+`AT+LIVESTREAM?`（查询，全状态可用）返回 `+LIVESTREAM:UART` 或 `+LIVESTREAM:CDC`。
+
+`AT+LIVESTREAM=UART` / `AT+LIVESTREAM=CDC`（设置，仅 IDLE）：
+
+- 成功：`OK`
+- 非 IDLE 且目标与当前不同：`ERROR:STATE`
+- 非 IDLE 且目标与当前相同：幂等 `OK`
+- 无效目标（非 UART/CDC、非大写）：`ERROR:ARGUMENT`
+
+冷启动默认 UART，设置不持久化（掉电后恢复 UART）。实时副本只发送到选定目标；非目标链路仍收发 AT 控制响应，但不接收主动传感器帧。CDC 被选中但主机未连接时，不自动回退 UART。
+
 `AT+STATE?` 的 `+SD` 行同时返回 `READY=0|1` 和 `FORMAT_REQUIRED=0|1`。恢复扫描完成并可接受采集、清理或导出请求后 `READY=1`；介质需要显式格式化时 `FORMAT_REQUIRED=1`。上位机在开始验收或采集前必须等待 `READY=1`。
+
+`AT+STATE?` 的 `+LIVE` 行返回实时流状态：
+
+```text
++LIVE:TARGET=<UART|CDC>,DROPS_IIS=<n>,DROPS_JY=<n>,LAST_ROUTED_SEQUENCE=<n>,LAST_COMPLETED_SEQUENCE=<n>
+```
+
+- `TARGET`：当前实时目标链路。
+- `DROPS_IIS` / `DROPS_JY`：共享按数据源 live-drop 计数，切换目标不清零（验收使用快照差值）。
+- `LAST_ROUTED_SEQUENCE`：Router 最近分配给实时候选的序号。
+- `LAST_COMPLETED_SEQUENCE`：Scheduler 最近完成物理发送的序号。
+- 主机按无符号 32-bit 环绕差计算滞后（routed - completed），验收要求滞后不持续 > 64 帧。
 
 ## 7. SD 持久存档、实时分流与历史导出
 
-当前固件没有 ACK、UART 软件 credit 或 RTS/CTS。实时 UART 使用在途帧不可覆盖的双槽丢旧保新队列；CDC_STREAM 冷启动默认为 OFF，显式开启后使用独立队列。任一实时链路启动失败、DMA 错误或拥塞只丢实时副本并累计链路计数，SD 所有权不受影响。完成事件只证明字节离开 STM32，不等价于 PC/ESP32 应用层持久化确认。
+当前固件没有 ACK、UART 软件 credit 或 RTS/CTS。实时流使用在途帧不可覆盖的双槽丢旧保新队列，只发送到 `AT+LIVESTREAM` 选定的唯一目标。CDC 被选中但未连接时不自动回退 UART。任一实时链路启动失败、DMA 错误或拥塞只丢实时副本并累计共享的按数据源 drop 计数（DROPS_IIS/DROPS_JY），SD 所有权不受影响。完成事件只证明字节离开 STM32，不等价于 PC/ESP32 应用层持久化确认。
 
-设备上电为 IDLE；`AT+START` 进入 ACQUIRE，`AT+STOP` 进入 STOPPING，等待 ingress、活动 chunk 和强制 checkpoint 完成后才回 IDLE 并回复 OK。STOP 不上传历史。SD V2 使用 block 0/1 交替超级块，block 2～7 保留，block 8 起为 8 sector/4096 字节环形 chunk。介质满时覆盖最旧 chunk，累计 `OVERWRITTEN_CHUNKS/FRAMES`，采集保持 ACQUIRE。
+设备上电为 IDLE；`AT+START` 进入 ACQUIRE，`AT+STOP` 进入 STOPPING，同时触发 SD flush 与 Live quiesce。仅当 STORAGE_FLUSHED 与 LIVE_QUIESCED 两事件都到达（任意顺序）才进 IDLE 并在原命令来源返回 OK。Live 侧丢弃并统计待发实时副本、等待唯一在途帧完成。STOP 不上传历史。SD V2 使用 block 0/1 交替超级块，block 2～7 保留，block 8 起为 8 sector/4096 字节环形 chunk。介质满时覆盖最旧 chunk，累计 `OVERWRITTEN_CHUNKS/FRAMES`，采集保持 ACQUIRE。
 
 IDLE 下 `AT+EXPORT=UART|CDC` 进入 EXPORT，从最旧 chunk 开始发送；命令来源端返回 `EXPORT_BEGIN` 和 OK，完成返回 `EXPORT_END:CHUNKS=n,FRAMES=n`，空存档返回 `EXPORT_EMPTY`。目标链路错误、START、STOP 或掉电会中止并保留当前 chunk，返回 `EXPORT_ABORTED`；重新导出从该 chunk 第一帧开始，允许最多重复一个 chunk，不能漏帧。UART 与 CDC 导出目标严格隔离，CDC 导出时 CLI_RESPONSE 可与历史帧交错。
 

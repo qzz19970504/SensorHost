@@ -13,7 +13,7 @@
 生产固件运行在 STM32F407VET6（LQFP100）。IIS3DWB 与 JY61PL 在统一分流点编码为 SDF v2（44 字节头、16 字节 UUID、全局 sequence），原始帧独立提交到板载 HHW1GS60C-B3 裸扇区循环队列；UART2 仅发送丢旧保新的实时副本或收到 `AT+EXPORT=UART` 后的历史副本。
 
 - UART2：上电默认 `115200` baud（可在 IDLE 持久化至 `3_000_000`）、8N1、无 RTS/CTS。
-- STM32 启动默认实时配置：UART 开启，`CDC_STREAM=OFF`；CDC 只有显式 `AT+CDCSTREAM=ON` 才接收实时副本。
+- STM32 启动默认实时配置：`AT+LIVESTREAM=UART`（冷启动默认）；实时副本只发送到 LIVESTREAM 选定的唯一目标。CDC 被选中但未连接时不自动回退 UART。非目标链路仍可收发 AT 控制响应。
 - 不存在 `credit` 或其他软件流控命令；旧命令会被当作未知命令。
 - UART 实时 DMA 启动失败、错误或中止只丢实时副本；SD 尾记录不回收，稍后可由 `EXPORT` 重发。
 - `EXPORT=UART|CDC` 逐帧发送历史数据，整 chunk 的目标 DMA 完成后才回收；中断或掉电允许最多重复一个 chunk。

@@ -31,7 +31,7 @@ class ConsoleView(QWidget):
         input_row.setSpacing(SPACE.compact)
         self.command_input = QLineEdit()
         self.command_input.setPlaceholderText(
-            "AT+STATE? | AT+START | AT+STOP | AT+CDCSTREAM? | AT+EXPORT=CDC"
+            "AT+STATE? | AT+START | AT+STOP | AT+LIVESTREAM? | AT+EXPORT=CDC"
         )
         self.send_button = QPushButton("SEND")
         input_row.addWidget(self.command_input, stretch=1)

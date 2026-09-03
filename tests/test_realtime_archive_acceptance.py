@@ -6,6 +6,7 @@ from sensor_host.tools.realtime_archive_models import (
     LiveAcceptance,
     OverwriteAcceptance,
     UartExportAcceptance,
+    sequence_lag,
 )
 from host.tools.realtime_archive_acceptance import _parse_state
 
@@ -17,23 +18,68 @@ def test_state_parser_exposes_storage_readiness() -> None:
         "+SD:USED=0,CAPACITY=100,PENDING_FRAMES=0,RETAINED_CHUNKS=0,"
         "RETAINED_FRAMES=0,OVERWRITTEN_CHUNKS=0,OVERWRITTEN_FRAMES=0,"
         "READY=1,FORMAT_REQUIRED=0\r\n"
-        "+LIVE_DROPS:UART_IIS=0,UART_JY=0,CDC=0\r\nOK\r\n"
+        "+LIVE:TARGET=UART,DROPS_IIS=0,DROPS_JY=0,"
+        "LAST_ROUTED_SEQUENCE=0,LAST_COMPLETED_SEQUENCE=0\r\nOK\r\n"
     )
     assert parsed["sd_ready"] is True
     assert parsed["sd_format_required"] is False
+    assert parsed["live_target"] == "UART"
+    assert parsed["drops_iis"] == 0
+    assert parsed["drops_jy"] == 0
+    assert parsed["last_routed_sequence"] == 0
+    assert parsed["last_completed_sequence"] == 0
+
+
+def test_state_parser_exposes_live_target_cdc() -> None:
+    parsed = _parse_state(
+        "+STATE:ACQUIRE\r\n"
+        "+UUID:550e8400-e29b-41d4-a716-446655440000,SOURCE=CONFIGURED\r\n"
+        "+SD:USED=1024,CAPACITY=2048,PENDING_FRAMES=5,RETAINED_CHUNKS=2,"
+        "RETAINED_FRAMES=10,OVERWRITTEN_CHUNKS=0,OVERWRITTEN_FRAMES=0,"
+        "READY=1,FORMAT_REQUIRED=0\r\n"
+        "+LIVE:TARGET=CDC,DROPS_IIS=3,DROPS_JY=1,"
+        "LAST_ROUTED_SEQUENCE=500,LAST_COMPLETED_SEQUENCE=490\r\nOK\r\n"
+    )
+    assert parsed["live_target"] == "CDC"
+    assert parsed["drops_iis"] == 3
+    assert parsed["drops_jy"] == 1
+    assert parsed["last_routed_sequence"] == 500
+    assert parsed["last_completed_sequence"] == 490
+
+
+def test_sequence_lag_wraparound() -> None:
+    assert sequence_lag(100, 50) == 50
+    assert sequence_lag(0, 0) == 0
+    # Wraparound: routed=2, completed=0xFFFFFFFE -> lag = 4
+    assert sequence_lag(2, 0xFFFFFFFE) == 4
+    assert sequence_lag(0xFFFFFFFF, 0xFFFFFFFF) == 0
 
 
 def test_live_acceptance_rejects_each_required_invariant() -> None:
-    accepted = LiveAcceptance(20, 200, 8, 0, 0, 0, 0)
+    accepted = LiveAcceptance(
+        live_target="UART",
+        target_frames=200,
+        nontarget_frames=0,
+        max_sequence_lag=8,
+        target_crc_errors=0,
+        nontarget_crc_errors=0,
+        drops_iis_delta=0,
+        drops_jy_delta=0,
+        source_drop_delta=0,
+        stop_latency_s=0.5,
+    )
     assert accepted.passed
     for field, value in {
-        "uart_frames": 0,
-        "cdc_frames": 0,
-        "uart_max_sequence_lag": 65,
-        "uart_crc_errors": 1,
-        "cdc_crc_errors": 1,
-        "cdc_live_drop_delta": 1,
+        "live_target": "INVALID",
+        "target_frames": 0,
+        "nontarget_frames": 1,
+        "max_sequence_lag": 65,
+        "target_crc_errors": 1,
+        "nontarget_crc_errors": 1,
+        "drops_iis_delta": 1,
+        "drops_jy_delta": 1,
         "source_drop_delta": 1,
+        "stop_latency_s": 2.01,
     }.items():
         assert not replace(accepted, **{field: value}).passed
 

@@ -35,7 +35,7 @@ Remove-Item Env:QT_QPA_PLATFORM
 
 ## What this does and does not do
 
-当前版本通过 STM32 USB CDC 接收 SDF1，显示 IIS3DWB 三轴振动时域数据、JY61PL 姿态/加速度/温度、固件 STATUS 和解析健康指标，并支持原始数据录制、UUID/CDC_STREAM/EXPORT CLI。传感器数据使用带 UUID 的 SDF v2；控制帧仍兼容 SDF v1。
+当前版本通过 STM32 USB CDC 接收 SDF1，显示 IIS3DWB 三轴振动时域数据、JY61PL 姿态/加速度/温度、固件 STATUS 和解析健康指标，并支持原始数据录制、UUID/LIVESTREAM/EXPORT CLI。传感器数据使用带 UUID 的 SDF v2；控制帧仍兼容 SDF v1。
 
 姿态动画表示设备方向，不表示绝对位置。当前 JY61PL payload 也不包含原始陀螺仪和磁力计通道，因此界面不声称显示完整原始九轴数据。V1 不包含通用文件管理器、频谱、报警、云同步或 CSV 导出；CSV 在出现明确分析需求后再做离线导出。
 
@@ -79,7 +79,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\package_host.ps1
 3. `LIVE MONITOR` 查看三轴波形、姿态和健康栏。
 4. `PAUSE` 只冻结显示；采集和原始录制继续。
 5. `DIAGNOSTICS` 查看 parser、host 和完整 STATUS 计数。
-6. `CONSOLE` 可发送 `AT+STATE?`、`AT+START`、`AT+STOP`、`AT+UUID?`、`AT+CDCSTREAM=ON|OFF` 和 `AT+EXPORT=UART|CDC`；watermark 暂保留兼容命令 `acq watermark 128|256|511`。CDC_STREAM 不会由主机自动开启。
+6. `CONSOLE` 可发送 `AT+STATE?`、`AT+START`、`AT+STOP`、`AT+UUID?`、`AT+LIVESTREAM?`、`AT+LIVESTREAM=UART|CDC` 和 `AT+EXPORT=UART|CDC`；watermark 暂保留兼容命令 `acq watermark 128|256|511`。LIVESTREAM 目标选择仅 IDLE 可切换。
 7. 结束前点 `DISCONNECT`，程序也会在退出时请求采集线程自然停止。
 
 当前 GUI 不提供 UART/ESP32 链路切换控件。ESP32 固件和上行 transport adapter 尚未实现、也未经硬件验证；交接约束见 [`docs/ESP32_GATEWAY_REQUIREMENTS.md`](../docs/ESP32_GATEWAY_REQUIREMENTS.md)。

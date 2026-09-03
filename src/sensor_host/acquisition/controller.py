@@ -91,13 +91,16 @@ class AcquisitionController:
         """Queue a canonical UUID update; firmware enforces IDLE state."""
         self.enqueue_command(f"AT+UUID={value}")
 
-    def request_cdc_stream(self) -> None:
-        """Queue a query for the optional CDC real-time stream."""
-        self.enqueue_command("AT+CDCSTREAM?")
+    def request_livestream(self) -> None:
+        """Queue a query for the current live-stream target."""
+        self.enqueue_command("AT+LIVESTREAM?")
 
-    def set_cdc_stream(self, enabled: bool) -> None:
-        """Enable or disable CDC real-time frames for this boot."""
-        self.enqueue_command(f"AT+CDCSTREAM={'ON' if enabled else 'OFF'}")
+    def set_livestream(self, target: str) -> None:
+        """Set live-stream target to UART or CDC (IDLE only)."""
+        normalized = target.upper()
+        if normalized not in {"UART", "CDC"}:
+            raise ValueError("live target must be UART or CDC")
+        self.enqueue_command(f"AT+LIVESTREAM={normalized}")
 
     def export_archive(self, target: str = "UART") -> None:
         """Start explicit archive export on UART or CDC."""

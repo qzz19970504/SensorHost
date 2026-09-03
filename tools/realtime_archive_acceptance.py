@@ -27,6 +27,7 @@ from sensor_host.tools.realtime_archive_models import (
     LiveAcceptance,
     OverwriteAcceptance,
     UartExportAcceptance,
+    sequence_lag,
 )
 
 _SENSOR_TYPES = {MessageType.IIS3DWB_FIFO, MessageType.JY61PL_SAMPLE}
@@ -40,9 +41,11 @@ _SD_PATTERN = re.compile(
     r"OVERWRITTEN_CHUNKS=(\d+),OVERWRITTEN_FRAMES=(\d+),"
     r"READY=([01]),FORMAT_REQUIRED=([01])"
 )
-_LIVE_DROP_PATTERN = re.compile(
-    r"\+LIVE_DROPS:UART_IIS=(\d+),UART_JY=(\d+),CDC=(\d+)"
+_LIVE_PATTERN = re.compile(
+    r"\+LIVE:TARGET=(UART|CDC),DROPS_IIS=(\d+),DROPS_JY=(\d+),"
+    r"LAST_ROUTED_SEQUENCE=(\d+),LAST_COMPLETED_SEQUENCE=(\d+)"
 )
+_LIVESTREAM_PATTERN = re.compile(r"\+LIVESTREAM:(UART|CDC)")
 
 
 class PortReader(threading.Thread):
@@ -133,11 +136,10 @@ def _parse_state(text: str) -> dict[str, Any]:
     state_match = _STATE_PATTERN.search(text)
     uuid_match = _UUID_PATTERN.search(text)
     sd_match = _SD_PATTERN.search(text)
-    drops_match = _LIVE_DROP_PATTERN.search(text)
-    if not all((state_match, uuid_match, sd_match, drops_match)):
+    live_match = _LIVE_PATTERN.search(text)
+    if not all((state_match, uuid_match, sd_match, live_match)):
         raise ValueError(f"incomplete AT+STATE response: {text!r}")
     sd = tuple(int(value) for value in sd_match.groups())
-    drops = tuple(int(value) for value in drops_match.groups())
     return {
         "state": state_match.group(1),
         "uuid": uuid_match.group(1).lower(),
@@ -151,9 +153,11 @@ def _parse_state(text: str) -> dict[str, Any]:
         "overwritten_frames": sd[6],
         "sd_ready": bool(sd[7]),
         "sd_format_required": bool(sd[8]),
-        "uart_iis_live_drops": drops[0],
-        "uart_jy_live_drops": drops[1],
-        "cdc_live_drops": drops[2],
+        "live_target": live_match.group(1),
+        "drops_iis": int(live_match.group(2)),
+        "drops_jy": int(live_match.group(3)),
+        "last_routed_sequence": int(live_match.group(4)),
+        "last_completed_sequence": int(live_match.group(5)),
     }
 
 
@@ -199,7 +203,7 @@ class AcceptanceSession:
                                        self.arguments.uart_baud, timeout=0.02)
         self.cdc_port.reset_input_buffer()
         self.uart_port.reset_input_buffer()
-        lightweight = self.arguments.mode == "live"
+        lightweight = self.arguments.mode in ("live-uart", "live-cdc")
         self.cdc = PortReader(self.cdc_port, self.cdc_raw_path, counters_only,
                               decode_sensor_payload=not lightweight)
         self.uart = PortReader(self.uart_port, self.uart_raw_path, counters_only,
@@ -288,68 +292,83 @@ def _run_preflight(session: AcceptanceSession) -> dict[str, Any]:
             break
         time.sleep(1.0)
         state = session.state()
-    cdc_stream = session.command("AT+CDCSTREAM?", "+CDCSTREAM:")
+    livestream_reply = session.command("AT+LIVESTREAM?", "+LIVESTREAM:")
+    livestream_match = _LIVESTREAM_PATTERN.search(livestream_reply)
+    livestream_target = livestream_match.group(1) if livestream_match else ""
     uuid_reply = session.command("AT+UUID?", "+UUID:")
     status = session.status()
     passed = (
         state["state"] == "IDLE"
         and state["sd_ready"]
         and not state["sd_format_required"]
-        and "+CDCSTREAM:OFF" in cdc_stream
+        and livestream_target == "UART"  # cold-boot default
+        and state["live_target"] == "UART"
         and state["uuid"] in uuid_reply.lower()
         and status is not None
     )
-    return {"passed": passed, "state": state, "cdc_stream": cdc_stream,
+    return {"passed": passed, "state": state, "livestream": livestream_reply,
             "uuid_reply": uuid_reply}
 
 
-def _run_live(session: AcceptanceSession) -> dict[str, Any]:
+def _run_live(session: AcceptanceSession, target: str) -> dict[str, Any]:
+    """Run live streaming acceptance for a single target (UART or CDC)."""
     assert session.uart is not None and session.cdc is not None
     session.command("AT+SDCLEAR=CONFIRM", timeout_s=5.0)
-    session.command("AT+CDCSTREAM=OFF")
+    session.command(f"AT+LIVESTREAM={target}")
     state_before = session.state()
+    assert state_before["live_target"] == target
     status_before = session.status()
     uart_start, cdc_start = session.uart.snapshot(), session.cdc.snapshot()
     session.command("AT+START")
-    time.sleep(min(0.3, session.arguments.duration / 4.0))
-    cdc_off_frames = session.cdc.snapshot()["sensor_frames"] - cdc_start["sensor_frames"]
-    session.command("AT+CDCSTREAM=ON")
     max_lag = 0
     deadline = time.monotonic() + session.arguments.duration
     while time.monotonic() < deadline:
-        uart_sequence = session.uart.snapshot()["last_sensor_sequence"]
-        cdc_sequence = session.cdc.snapshot()["last_sensor_sequence"]
-        if uart_sequence is not None and cdc_sequence is not None:
-            max_lag = max(max_lag, max(0, cdc_sequence - uart_sequence))
+        current_state = session.state()
+        lag = sequence_lag(current_state["last_routed_sequence"],
+                           current_state["last_completed_sequence"])
+        max_lag = max(max_lag, lag)
         time.sleep(0.05)
     state_during = session.state()
     status_after = session.status()
-    session.stop_and_wait()
+    stop_latency, stopped = session.stop_and_wait()
     uart_end, cdc_end = session.uart.snapshot(), session.cdc.snapshot()
     uart_frames = _sensor_frames(session.uart.frames_since(uart_start))
     cdc_frames = _sensor_frames(session.cdc.frames_since(cdc_start))
+    # Determine target vs non-target frames
+    if target == "UART":
+        target_frames = uart_frames
+        nontarget_frames = cdc_frames
+        target_crc = _parser_delta(uart_end, uart_start, "crc_errors")
+        nontarget_crc = _parser_delta(cdc_end, cdc_start, "crc_errors")
+    else:
+        target_frames = cdc_frames
+        nontarget_frames = uart_frames
+        target_crc = _parser_delta(cdc_end, cdc_start, "crc_errors")
+        nontarget_crc = _parser_delta(uart_end, uart_start, "crc_errors")
     model = LiveAcceptance(
-        uart_frames=len(uart_frames), cdc_frames=len(cdc_frames),
-        uart_max_sequence_lag=max_lag,
-        uart_crc_errors=_parser_delta(uart_end, uart_start, "crc_errors"),
-        cdc_crc_errors=_parser_delta(cdc_end, cdc_start, "crc_errors"),
-        cdc_live_drop_delta=(state_during["cdc_live_drops"] -
-                             state_before["cdc_live_drops"]),
+        live_target=target,
+        target_frames=len(target_frames),
+        nontarget_frames=len(nontarget_frames),
+        max_sequence_lag=max_lag,
+        target_crc_errors=target_crc,
+        nontarget_crc_errors=nontarget_crc,
+        drops_iis_delta=state_during["drops_iis"] - state_before["drops_iis"],
+        drops_jy_delta=state_during["drops_jy"] - state_before["drops_jy"],
         source_drop_delta=status_after.source_drops - status_before.source_drops,
+        stop_latency_s=stop_latency,
     )
-    types = {frame.message_type for frame in uart_frames + cdc_frames}
-    uuids = {str(frame.device_uuid) for frame in uart_frames + cdc_frames}
-    passed = (model.passed and cdc_off_frames == 0 and
-              types == _SENSOR_TYPES and uuids == {state_before["uuid"]})
+    types = {frame.message_type for frame in target_frames}
+    uuids = {str(frame.device_uuid) for frame in target_frames}
+    passed = (model.passed and types == _SENSOR_TYPES
+              and uuids == {state_before["uuid"]})
     return {"passed": passed, "acceptance": dataclasses.asdict(model),
-            "cdc_off_sensor_frames": cdc_off_frames,
             "sensor_types": sorted(item.name for item in types),
             "observed_uuids": sorted(uuids)}
 
 
 def _run_overwrite(session: AcceptanceSession) -> dict[str, Any]:
     session.command("AT+SDCLEAR=CONFIRM", timeout_s=5.0)
-    session.command("AT+CDCSTREAM=OFF")
+    session.command("AT+LIVESTREAM=UART")
     before = session.state()
     status_before = session.status()
     session.command("AT+START")
@@ -423,7 +442,7 @@ def _export_model(session: AcceptanceSession, target: str,
 
 def _prepare_short_archive(session: AcceptanceSession) -> dict[str, Any]:
     session.command("AT+SDCLEAR=CONFIRM", timeout_s=5.0)
-    session.command("AT+CDCSTREAM=OFF")
+    session.command("AT+LIVESTREAM=UART")
     identity = session.state()
     session.command("AT+START")
     time.sleep(session.arguments.duration)
@@ -490,7 +509,8 @@ def _run_interrupt_export(session: AcceptanceSession) -> dict[str, Any]:
 def _arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--list-ports", action="store_true")
-    parser.add_argument("--mode", choices=("preflight", "live", "overwrite",
+    parser.add_argument("--mode", choices=("preflight", "live-uart", "live-cdc",
+                                            "overwrite",
                                             "export-uart", "export-cdc",
                                             "interrupt-export"))
     parser.add_argument("--cdc-port")
@@ -525,7 +545,8 @@ def main() -> int:
         return _show_ports()
     runners = {
         "preflight": _run_preflight,
-        "live": _run_live,
+        "live-uart": lambda session: _run_live(session, "UART"),
+        "live-cdc": lambda session: _run_live(session, "CDC"),
         "overwrite": _run_overwrite,
         "export-uart": lambda session: _run_export(session, "UART"),
         "export-cdc": lambda session: _run_export(session, "CDC"),
