@@ -46,6 +46,7 @@ _LIVE_PATTERN = re.compile(
     r"LAST_ROUTED_SEQUENCE=(\d+),LAST_COMPLETED_SEQUENCE=(\d+)"
 )
 _LIVESTREAM_PATTERN = re.compile(r"\+LIVESTREAM:(UART|CDC)")
+_BAUD_PATTERN = re.compile(r"\+BAUD:(\d+)")
 
 
 class PortReader(threading.Thread):
@@ -133,6 +134,16 @@ def _wait_until(predicate: Callable[[], bool], timeout_s: float,
 
 
 def _parse_state(text: str) -> dict[str, Any]:
+    """Parse AT+STATE? response text into a structured dict.
+
+    C5: FORMAT_REQUIRED=1 is a valid structured result, not an error.
+    C6: ERROR:RESPONSE_TOO_LARGE is recognised as a diagnostic condition.
+    """
+    if "ERROR:RESPONSE_TOO_LARGE" in text:
+        raise ValueError(
+            "firmware returned ERROR:RESPONSE_TOO_LARGE — +STATE response "
+            "exceeds internal buffer; reduce concurrent state complexity"
+        )
     state_match = _STATE_PATTERN.search(text)
     uuid_match = _UUID_PATTERN.search(text)
     sd_match = _SD_PATTERN.search(text)
@@ -225,44 +236,89 @@ class AcceptanceSession:
         self.cdc_port.close()
 
     def command(self, command: str, expected: str = "OK",
-                timeout_s: float = 3.0) -> str:
+                timeout_s: float = 3.0, via: str = "cdc") -> str:
+        """Send a command via the specified control link ('cdc' or 'uart').
+
+        C8: During live modes, control/polling goes through the non-target link
+        to avoid polluting the data link's frame statistics.
+        C6: Recognises ERROR:RESPONSE_TOO_LARGE as a structured diagnostic.
+        """
         assert self.cdc is not None and self.cdc_port is not None
-        marker = self.cdc.snapshot()["cli"]
+        assert self.uart is not None and self.uart_port is not None
+        if via == "uart":
+            port = self.uart_port
+            reader = self.uart
+        else:
+            port = self.cdc_port
+            reader = self.cdc
+        marker = reader.snapshot()["cli"]
         encoded = command.encode("ascii") + b"\r\n"
-        if self.cdc_port.write(encoded) != len(encoded):
-            raise OSError(f"short control write for {command}")
-        self.cdc_port.flush()
+        if port.write(encoded) != len(encoded):
+            raise OSError(f"short control write for {command} via {via}")
+        port.flush()
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
-            response = self.cdc.cli_since(marker)
+            response = reader.cli_since(marker)
             if expected in response:
                 return response
+            if "ERROR:RESPONSE_TOO_LARGE" in response:
+                raise ValueError(
+                    f"{command} via {via}: firmware buffer overflow "
+                    "(ERROR:RESPONSE_TOO_LARGE)")
             if "ERROR:" in response:
-                raise RuntimeError(f"{command} returned {response.strip()}")
+                raise RuntimeError(f"{command} via {via} returned {response.strip()}")
             time.sleep(0.02)
         raise TimeoutError(
-            f"timed out waiting for {command} response containing {expected!r}")
+            f"timed out waiting for {command} via {via} response "
+            f"containing {expected!r}")
 
-    def state(self) -> dict[str, Any]:
-        return _parse_state(self.command("AT+STATE?", "+STATE:"))
+    def state(self, via: str = "cdc") -> dict[str, Any]:
+        return _parse_state(self.command("AT+STATE?", "+STATE:", via=via))
 
-    def status(self) -> Any:
-        assert self.cdc is not None
-        marker = self.cdc.snapshot()["statuses"]
-        self.command("status")
-        _wait_until(lambda: self.cdc.snapshot()["statuses"] > marker, 3.0,
+    def status(self, via: str = "cdc") -> Any:
+        if via == "uart":
+            reader = self.uart
+        else:
+            reader = self.cdc
+        assert reader is not None
+        marker = reader.snapshot()["statuses"]
+        self.command("status", via=via)
+        _wait_until(lambda: reader.snapshot()["statuses"] > marker, 3.0,
                     "binary STATUS frame")
-        return self.cdc.latest_status()
+        return reader.latest_status()
 
-    def stop_and_wait(self) -> tuple[float, dict[str, Any]]:
+    def stop_and_wait(self, via: str = "cdc") -> tuple[float, dict[str, Any]]:
+        """C1: Measure STOP→OK latency and verify zero post-STOP sensor frames."""
+        assert self.uart is not None and self.cdc is not None
         started = time.monotonic()
-        self.command("AT+STOP", timeout_s=3.0)
+        self.command("AT+STOP", timeout_s=3.0, via=via)
         elapsed = time.monotonic() - started
-        state = self.state()
+        state = self.state(via=via)
         if state["state"] != "IDLE":
             raise RuntimeError(f"STOP completed in unexpected state {state['state']}")
         self.wait_for_inflight_completion()
         return elapsed, state
+
+    def post_stop_sensor_frame_count(self, wait_s: float = 1.0) -> int:
+        """C1: After STOP OK, snapshot both links, wait, then count new sensor frames."""
+        assert self.uart is not None and self.cdc is not None
+        uart_before = self.uart.snapshot()["sensor_frames"]
+        cdc_before = self.cdc.snapshot()["sensor_frames"]
+        time.sleep(wait_s)
+        uart_after = self.uart.snapshot()["sensor_frames"]
+        cdc_after = self.cdc.snapshot()["sensor_frames"]
+        return (uart_after - uart_before) + (cdc_after - cdc_before)
+
+    def probe_nontarget_at(self, via: str) -> bool:
+        """C8: Verify the non-target link responds to AT and AT+STATE?."""
+        try:
+            reply = self.command("AT", "OK", timeout_s=2.0, via=via)
+            if "OK" not in reply:
+                return False
+            reply = self.command("AT+STATE?", "+STATE:", timeout_s=2.0, via=via)
+            return "+STATE:" in reply
+        except (RuntimeError, TimeoutError, OSError, ValueError):
+            return False
 
     def wait_for_inflight_completion(self) -> None:
         assert self.uart is not None and self.cdc is not None
@@ -285,13 +341,25 @@ def _parser_delta(end: dict[str, Any], start: dict[str, Any], name: str) -> int:
 
 
 def _run_preflight(session: AcceptanceSession) -> dict[str, Any]:
+    """C5: FORMAT_REQUIRED produces a structured result, not an exception."""
     state = session.state()
+    # C5: If FORMAT_REQUIRED, return structured failure immediately
+    if state["sd_format_required"]:
+        return {
+            "passed": False,
+            "reason": "SD card requires formatting (FORMAT_REQUIRED=1)",
+            "state": state,
+        }
     deadline = time.monotonic() + max(30.0, session.arguments.duration)
     while not state["sd_ready"] and time.monotonic() < deadline:
-        if state["sd_format_required"]:
-            break
         time.sleep(1.0)
         state = session.state()
+        if state["sd_format_required"]:
+            return {
+                "passed": False,
+                "reason": "SD card requires formatting (FORMAT_REQUIRED=1)",
+                "state": state,
+            }
     livestream_reply = session.command("AT+LIVESTREAM?", "+LIVESTREAM:")
     livestream_match = _LIVESTREAM_PATTERN.search(livestream_reply)
     livestream_target = livestream_match.group(1) if livestream_match else ""
@@ -311,54 +379,86 @@ def _run_preflight(session: AcceptanceSession) -> dict[str, Any]:
 
 
 def _run_live(session: AcceptanceSession, target: str) -> dict[str, Any]:
-    """Run live streaming acceptance for a single target (UART or CDC)."""
+    """Run live streaming acceptance for a single target (UART or CDC).
+
+    C8: Control/polling goes through the non-target link.
+    C2: Sequence lag baseline reset after SDCLEAR.
+    C1: Post-STOP zero sensor frame assertion.
+    """
     assert session.uart is not None and session.cdc is not None
-    session.command("AT+SDCLEAR=CONFIRM", timeout_s=5.0)
-    session.command(f"AT+LIVESTREAM={target}")
-    state_before = session.state()
+    # C8: control link is the opposite of the data target
+    control_via = "cdc" if target == "UART" else "uart"
+
+    session.command("AT+SDCLEAR=CONFIRM", timeout_s=5.0, via=control_via)
+    session.command(f"AT+LIVESTREAM={target}", via=control_via)
+    state_before = session.state(via=control_via)
     assert state_before["live_target"] == target
-    status_before = session.status()
+    status_before = session.status(via=control_via)
+
+    # C8: Probe non-target link AT responsiveness before starting
+    nontarget_at_ok = session.probe_nontarget_at(via=control_via)
+
     uart_start, cdc_start = session.uart.snapshot(), session.cdc.snapshot()
-    session.command("AT+START")
+    session.command("AT+START", via=control_via)
+
+    # C2: After SDCLEAR, sequence baseline is reset; poll lag from state
     max_lag = 0
     deadline = time.monotonic() + session.arguments.duration
     while time.monotonic() < deadline:
-        current_state = session.state()
+        current_state = session.state(via=control_via)
         lag = sequence_lag(current_state["last_routed_sequence"],
                            current_state["last_completed_sequence"])
         max_lag = max(max_lag, lag)
         time.sleep(0.05)
-    state_during = session.state()
-    status_after = session.status()
-    stop_latency, stopped = session.stop_and_wait()
+
+    state_during = session.state(via=control_via)
+    status_after = session.status(via=control_via)
+    stop_latency, stopped = session.stop_and_wait(via=control_via)
+
+    # C1: Verify zero sensor frames arrive after STOP OK
+    post_stop_frames = session.post_stop_sensor_frame_count(wait_s=1.0)
+
     uart_end, cdc_end = session.uart.snapshot(), session.cdc.snapshot()
     uart_frames = _sensor_frames(session.uart.frames_since(uart_start))
     cdc_frames = _sensor_frames(session.cdc.frames_since(cdc_start))
-    # Determine target vs non-target frames
+
+    # Determine target vs non-target frames and error deltas
     if target == "UART":
-        target_frames = uart_frames
-        nontarget_frames = cdc_frames
-        target_crc = _parser_delta(uart_end, uart_start, "crc_errors")
-        nontarget_crc = _parser_delta(cdc_end, cdc_start, "crc_errors")
+        target_frames_list = uart_frames
+        nontarget_frames_list = cdc_frames
+        target_end, target_start_snap = uart_end, uart_start
+        nontarget_end, nontarget_start_snap = cdc_end, cdc_start
+        physical_tx_delta = (status_after.uart_dma_errors -
+                             status_before.uart_dma_errors)
     else:
-        target_frames = cdc_frames
-        nontarget_frames = uart_frames
-        target_crc = _parser_delta(cdc_end, cdc_start, "crc_errors")
-        nontarget_crc = _parser_delta(uart_end, uart_start, "crc_errors")
+        target_frames_list = cdc_frames
+        nontarget_frames_list = uart_frames
+        target_end, target_start_snap = cdc_end, cdc_start
+        nontarget_end, nontarget_start_snap = uart_end, uart_start
+        physical_tx_delta = (status_after.cdc_errors -
+                             status_before.cdc_errors)
+
     model = LiveAcceptance(
         live_target=target,
-        target_frames=len(target_frames),
-        nontarget_frames=len(nontarget_frames),
+        target_frames=len(target_frames_list),
+        nontarget_frames=len(nontarget_frames_list),
         max_sequence_lag=max_lag,
-        target_crc_errors=target_crc,
-        nontarget_crc_errors=nontarget_crc,
+        target_crc_errors=_parser_delta(target_end, target_start_snap, "crc_errors"),
+        nontarget_crc_errors=_parser_delta(nontarget_end, nontarget_start_snap,
+                                           "crc_errors"),
+        header_errors=_parser_delta(target_end, target_start_snap, "header_errors"),
+        length_errors=_parser_delta(target_end, target_start_snap, "length_errors"),
+        payload_errors=_parser_delta(target_end, target_start_snap, "payload_errors"),
+        physical_tx_error_delta=physical_tx_delta,
         drops_iis_delta=state_during["drops_iis"] - state_before["drops_iis"],
         drops_jy_delta=state_during["drops_jy"] - state_before["drops_jy"],
         source_drop_delta=status_after.source_drops - status_before.source_drops,
         stop_latency_s=stop_latency,
+        post_stop_sensor_frames=post_stop_frames,
+        nontarget_at_probe=nontarget_at_ok,
     )
-    types = {frame.message_type for frame in target_frames}
-    uuids = {str(frame.device_uuid) for frame in target_frames}
+    types = {frame.message_type for frame in target_frames_list}
+    uuids = {str(frame.device_uuid) for frame in target_frames_list}
     passed = (model.passed and types == _SENSOR_TYPES
               and uuids == {state_before["uuid"]})
     return {"passed": passed, "acceptance": dataclasses.asdict(model),
@@ -367,6 +467,7 @@ def _run_live(session: AcceptanceSession, target: str) -> dict[str, Any]:
 
 
 def _run_overwrite(session: AcceptanceSession) -> dict[str, Any]:
+    """C3: BUFFER_FULL does not stop acquisition; remained_acquiring must hold."""
     session.command("AT+SDCLEAR=CONFIRM", timeout_s=5.0)
     session.command("AT+LIVESTREAM=UART")
     before = session.state()
@@ -396,6 +497,80 @@ def _run_overwrite(session: AcceptanceSession) -> dict[str, Any]:
         retained_frames=stopped["retained_frames"],
     )
     return {"passed": model.passed, "acceptance": dataclasses.asdict(model)}
+
+
+def _run_uuid_persistence(session: AcceptanceSession) -> dict[str, Any]:
+    """Verify UUID derivation stability, CONFIGURED persistence, baud and
+    LIVESTREAM cold-boot defaults across a power cycle.
+
+    Workflow:
+    1. Read current state: uuid, uuid_source, baud, livestream target.
+    2. If uuid_source==DERIVED: write the same UUID via AT+UUID=<derived>,
+       set LIVESTREAM=CDC, prompt user to power-cycle and re-run.
+    3. If uuid_source==CONFIGURED (post-reboot): assert baud unchanged,
+       livestream reverted to UART (volatile), uuid stable.
+    """
+    state = session.state()
+    livestream_reply = session.command("AT+LIVESTREAM?", "+LIVESTREAM:")
+    livestream_match = _LIVESTREAM_PATTERN.search(livestream_reply)
+    livestream_target = livestream_match.group(1) if livestream_match else ""
+    baud_reply = session.command("AT+BAUD?", "+BAUD:")
+    baud_match = _BAUD_PATTERN.search(baud_reply)
+    current_baud = int(baud_match.group(1)) if baud_match else 0
+
+    baseline_path = session.arguments.output.with_suffix(".uuid_baseline.json")
+    baseline: dict[str, Any] | None = None
+    if baseline_path.exists():
+        baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+
+    if state["uuid_source"] == "DERIVED" and baseline is None:
+        # First run: record baseline, set UUID and LIVESTREAM=CDC for reboot test
+        derived_uuid = state["uuid"]
+        session.command(f"AT+UUID={derived_uuid}")
+        session.command("AT+LIVESTREAM=CDC")
+        verify = session.state()
+        baseline_data = {
+            "uuid": derived_uuid,
+            "baud": current_baud,
+            "livestream_before_reboot": verify["live_target"],
+        }
+        baseline_path.parent.mkdir(parents=True, exist_ok=True)
+        baseline_path.write_text(json.dumps(baseline_data, indent=2), encoding="utf-8")
+        return {
+            "passed": verify["uuid_source"] == "CONFIGURED"
+                      and verify["live_target"] == "CDC",
+            "phase": "setup",
+            "instruction": "Power-cycle the device, then re-run --mode uuid-persistence",
+            "baseline": baseline_data,
+            "state": verify,
+        }
+    elif baseline is not None:
+        # Post-reboot verification
+        uuid_stable = state["uuid"] == baseline["uuid"]
+        baud_stable = current_baud == baseline["baud"]
+        livestream_reverted = livestream_target == "UART"  # volatile, cold-boot default
+        configured = state["uuid_source"] == "CONFIGURED"
+        passed = uuid_stable and baud_stable and livestream_reverted and configured
+        return {
+            "passed": passed,
+            "phase": "verify",
+            "uuid_stable": uuid_stable,
+            "baud_stable": baud_stable,
+            "livestream_reverted_to_uart": livestream_reverted,
+            "uuid_configured": configured,
+            "baseline": baseline,
+            "state": state,
+        }
+    else:
+        # Already CONFIGURED without baseline — just verify defaults
+        passed = (livestream_target == "UART" and state["state"] == "IDLE")
+        return {
+            "passed": passed,
+            "phase": "check",
+            "state": state,
+            "livestream": livestream_target,
+            "baud": current_baud,
+        }
 
 
 def _export_model(session: AcceptanceSession, target: str,
@@ -510,7 +685,7 @@ def _arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--list-ports", action="store_true")
     parser.add_argument("--mode", choices=("preflight", "live-uart", "live-cdc",
-                                            "overwrite",
+                                            "overwrite", "uuid-persistence",
                                             "export-uart", "export-cdc",
                                             "interrupt-export"))
     parser.add_argument("--cdc-port")
@@ -548,6 +723,7 @@ def main() -> int:
         "live-uart": lambda session: _run_live(session, "UART"),
         "live-cdc": lambda session: _run_live(session, "CDC"),
         "overwrite": _run_overwrite,
+        "uuid-persistence": _run_uuid_persistence,
         "export-uart": lambda session: _run_export(session, "UART"),
         "export-cdc": lambda session: _run_export(session, "CDC"),
         "interrupt-export": _run_interrupt_export,

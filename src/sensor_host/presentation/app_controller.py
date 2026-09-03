@@ -140,6 +140,25 @@ class AppController(QObject):
         except ValueError as error:
             self.error_raised.emit(str(error))
 
+    @pyqtSlot(str)
+    def set_livestream(self, target: str) -> None:
+        """Select the mutually-exclusive live target (UART or CDC) from the UI."""
+        if self._acquisition is None:
+            self.error_raised.emit("connect to a device before selecting a live target")
+            return
+        try:
+            self._acquisition.set_livestream(target)
+        except ValueError as error:
+            self.error_raised.emit(str(error))
+
+    @pyqtSlot()
+    def request_livestream(self) -> None:
+        """Queue an AT+LIVESTREAM? query from the UI."""
+        if self._acquisition is None:
+            self.error_raised.emit("connect to a device before querying the live target")
+            return
+        self._acquisition.request_livestream()
+
     @pyqtSlot(bool)
     def set_display_paused(self, paused: bool) -> None:
         self._display_paused = paused

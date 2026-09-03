@@ -61,3 +61,27 @@ def test_start_and_stop_use_official_at_commands() -> None:
     controller._send_pending_commands()
 
     assert transport.commands == [b"AT+START", b"AT+STOP"]
+
+
+def test_livestream_query_and_normalized_target_selection() -> None:
+    transport = FakeTransport([])
+    controller = AcquisitionController(transport, RealtimeSampleStore())
+    controller.request_livestream()
+    controller.set_livestream("uart")
+    controller.set_livestream("CDC")
+
+    controller._send_pending_commands()
+
+    assert transport.commands == [
+        b"AT+LIVESTREAM?",
+        b"AT+LIVESTREAM=UART",
+        b"AT+LIVESTREAM=CDC",
+    ]
+
+
+@pytest.mark.parametrize("target", ["", "usb", "UART2", "CDC ", "uart cdc"])
+def test_set_livestream_rejects_invalid_targets(target: object) -> None:
+    controller = AcquisitionController(FakeTransport([]), RealtimeSampleStore())
+
+    with pytest.raises(ValueError, match="UART or CDC"):
+        controller.set_livestream(target)  # type: ignore[arg-type]
