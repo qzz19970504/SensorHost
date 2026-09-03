@@ -17,6 +17,7 @@ from host.tools.realtime_archive_acceptance import (
     AcceptanceSession,
     PortReader,
     _parse_state,
+    _select_poll_interval,
 )
 
 
@@ -454,3 +455,115 @@ def test_interrupted_export_allows_duplicates_but_never_missing_frames() -> None
     assert not replace(accepted, duplicate_frames=0).passed
     assert not replace(accepted, missing_after_dedup=1).passed
     assert not replace(accepted, resumed_acquire=False).passed
+
+
+# --- R2 refinement (a): sparse control polling when links are shared ---------
+
+
+def test_state_poll_interval_sparse_when_control_shares_data_link() -> None:
+    """live-cdc (control=cdc, target=CDC) shares one physical link, so polling is
+    sparse (5 s) to avoid CDC IN endpoint contention that makes the device's
+    live-frame CDC_Transmit_FS go BUSY and, past the retry budget, drop.  live-uart
+    (control=cdc, target=UART) uses separate links, so dense (50 ms) is harmless.
+    An explicit --state-poll-interval override always wins."""
+    assert _select_poll_interval("cdc", "CDC") == 5.0
+    assert _select_poll_interval("cdc", "UART") == 0.05
+    assert _select_poll_interval("cdc", "CDC", 1.0) == 1.0
+    assert _select_poll_interval("cdc", "UART", 2.5) == 2.5
+    # Link comparison is case/whitespace insensitive.
+    assert _select_poll_interval(" CDC ", "cdc") == 5.0
+
+
+# --- R2 refinement (b)/(c): cross-link post_stop timing ----------------------
+
+
+_VALID_STATE_REPLY = (
+    "+STATE:IDLE\r\n"
+    "+UUID:550e8400-e29b-41d4-a716-446655440000,SOURCE=DERIVED\r\n"
+    "+SD:USED=0,CAPACITY=100,PENDING_FRAMES=0,RETAINED_CHUNKS=0,"
+    "RETAINED_FRAMES=0,OVERWRITTEN_CHUNKS=0,OVERWRITTEN_FRAMES=0,"
+    "READY=1,FORMAT_REQUIRED=0\r\n"
+    "+LIVE:TARGET=UART,DROPS_IIS=0,DROPS_JY=0,"
+    "LAST_ROUTED_SEQUENCE=0,LAST_COMPLETED_SEQUENCE=0\r\nOK\r\n"
+)
+
+
+class _ScheduledReader:
+    """Fake reader whose sensor_frames/bytes follow a wall-clock schedule.
+
+    ``schedule`` is a list of ``(delay_s, sensor_frames, bytes)`` milestones
+    applied relative to construction; the reader reports the latest milestone
+    whose delay has elapsed.  ``cli_since`` always returns a valid +STATE/OK
+    reply so AT+STOP and AT+STATE? succeed on the first poll, modelling the fast
+    CDC control link whose OK precedes the slow data-link tail frame.
+    """
+
+    def __init__(self, schedule: list[tuple[float, int, int]] | None = None) -> None:
+        self._t0 = time.monotonic()
+        self._schedule = sorted(schedule or [])
+
+    def _current(self) -> tuple[int, int]:
+        elapsed = time.monotonic() - self._t0
+        sensor, nbytes = 0, 0
+        for delay, sensor_at, bytes_at in self._schedule:
+            if elapsed >= delay:
+                sensor, nbytes = sensor_at, bytes_at
+        return sensor, nbytes
+
+    def snapshot(self) -> dict[str, int]:
+        sensor, nbytes = self._current()
+        return {"cli": 0, "statuses": 0, "sensor_frames": sensor, "bytes": nbytes}
+
+    def cli_since(self, marker: int) -> str:
+        return _VALID_STATE_REPLY
+
+    def latest_status(self) -> object | None:
+        return None
+
+    def frames_since(self, marker: dict[str, int]) -> list:
+        return []
+
+
+def _quiet_session(tmp_path, uart_schedule, cdc_schedule=None) -> AcceptanceSession:
+    """AcceptanceSession with separate scheduled UART/CDC readers + a fake port."""
+    arguments = argparse.Namespace(output=tmp_path / "out.json")
+    session = AcceptanceSession(arguments)
+    port = _FakePort()
+    session.cdc_port = port
+    session.uart_port = port
+    session.cdc = _ScheduledReader(cdc_schedule)  # type: ignore[assignment]
+    session.uart = _ScheduledReader(uart_schedule)  # type: ignore[assignment]
+    return session
+
+
+def test_post_stop_tail_frame_after_fast_ok_then_quiet_is_not_counted(tmp_path) -> None:
+    """Cross-link false-positive fix (live-uart): the STOP OK returns over the
+    fast CDC control link while the last data frame is still shifting out on the
+    slow UART wire, so the tail frame arrives AFTER OK.  stop_and_wait must wait
+    for link quiescence before taking the baseline, so the tail frame is absorbed
+    into the handshake window (handshake_inflight_frames==1) and post_stop stays
+    0 -- NOT mis-counted as a post-OK leak (the R2 live-uart post_stop=1 bug)."""
+    # Tail frame lands 0.06 s after OK (sensor 0->1, bytes 0->80), then silence.
+    session = _quiet_session(tmp_path, uart_schedule=[(0.06, 1, 80)])
+    session.stop_and_wait(via="cdc", post_stop_quiet_s=0.15)
+    assert session.handshake_inflight_frame_count() == 1
+    assert session.post_stop_sensor_frame_count(wait_s=0.15) == 0
+    # The healthy model gate passes: post_stop==0 with a handshake tail frame.
+    assert _live("UART", post_stop_sensor_frames=0,
+                 handshake_inflight_frames=1).passed
+
+
+def test_post_stop_new_frame_after_quiet_still_fails(tmp_path) -> None:
+    """Real leak guard: a NEW active sensor frame emitted AFTER the links went
+    quiet and the baseline was taken (live_inhibited latch failed) must still be
+    counted by post_stop_sensor_frame_count so the C1 gate fails.  The tail frame
+    at 0.06 s is absorbed into the handshake; the leak at 0.55 s is not."""
+    session = _quiet_session(
+        tmp_path, uart_schedule=[(0.06, 1, 80), (0.55, 2, 160)])
+    session.stop_and_wait(via="cdc", post_stop_quiet_s=0.15)
+    assert session.handshake_inflight_frame_count() == 1
+    # Observation window reaches the 0.55 s leak milestone -> one post-OK frame.
+    assert session.post_stop_sensor_frame_count(wait_s=0.6) == 1
+    # And the model gate flips to failed with post_stop_sensor_frames==1.
+    assert not _live("UART", post_stop_sensor_frames=1,
+                     handshake_inflight_frames=1).passed

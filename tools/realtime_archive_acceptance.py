@@ -201,6 +201,34 @@ def _missing_after_dedup(frames: list[Frame]) -> int:
     return missing
 
 
+# Live control-poll cadence.  Dense (50 ms) when control and data use separate
+# physical links (live-uart: control on CDC, data on UART) so lag-over-time is
+# sampled finely at negligible cost.  Sparse (5 s) when they share one link
+# (live-cdc: control and data both on CDC) so AT+STATE? replies do not contend
+# with live data frames for the single CDC IN endpoint -- that contention makes
+# the device's live-frame CDC_Transmit_FS go BUSY and, past the retry budget,
+# drop.  max_sequence_lag is now a freshness diagnostic (not a hard gate), so a
+# sparse lag-over-time sampling is sufficient.  ``--state-poll-interval`` wins.
+_DENSE_POLL_INTERVAL_S = 0.05
+_SPARSE_POLL_INTERVAL_S = 5.0
+
+
+def _select_poll_interval(control_link: str, target: str,
+                          override: float | None = None) -> float:
+    """Choose the live AT+STATE? poll interval in seconds.
+
+    ``override`` (from ``--state-poll-interval``) wins when provided.  Otherwise
+    the interval is sparse when the control link and the live data target are the
+    same physical link (e.g. live-cdc: control=cdc, target=CDC) to avoid CDC IN
+    endpoint contention, and dense when they differ (e.g. live-uart: control=cdc,
+    target=UART) where polling cannot contend with the data link.
+    """
+    if override is not None:
+        return float(override)
+    same_link = control_link.strip().lower() == target.strip().lower()
+    return _SPARSE_POLL_INTERVAL_S if same_link else _DENSE_POLL_INTERVAL_S
+
+
 class AcceptanceSession:
     def __init__(self, arguments: argparse.Namespace) -> None:
         self.arguments = arguments
@@ -212,9 +240,11 @@ class AcceptanceSession:
         self.cdc_port: serial.Serial | None = None
         self.uart: PortReader | None = None
         self.cdc: PortReader | None = None
-        # C1 baseline captured at the moment STOP's OK returns, so the hard
-        # zero-frame gate counts only NEW active sensor frames emitted AFTER OK
-        # (the design-allowed in-flight handshake frame is excluded).
+        # C1 baseline captured after the data links fall silent following STOP's
+        # OK (see stop_and_wait), so the hard zero-frame gate counts only NEW
+        # active sensor frames emitted after the device is genuinely idle; the
+        # design-allowed in-flight frame -- and any cross-link tail frame still
+        # shifting out on a slow link after the fast OK -- is excluded.
         self._post_stop_baseline: tuple[int, int] | None = None
         # Snapshot just before AT+STOP is written; used only for the soft
         # handshake_inflight_frames diagnostic (handshake window start).
@@ -338,19 +368,33 @@ class AcceptanceSession:
                     "binary STATUS frame")
         return reader.latest_status()
 
-    def stop_and_wait(self, via: str = "cdc") -> tuple[float, dict[str, Any]]:
+    def stop_and_wait(self, via: str = "cdc",
+                      post_stop_quiet_s: float | None = None,
+                      ) -> tuple[float, dict[str, Any]]:
         """C1: Measure STOP→OK latency and verify zero post-OK sensor frames.
 
         The firmware design explicitly allows the single in-flight live frame to
-        complete naturally during the STOP handshake (it finishes before OK is
-        returned); the live_inhibited latch guarantees no NEW active sensor
-        frame is emitted after OK.  The hard C1 gate therefore uses the moment
-        OK returns as its baseline -- not the moment AT+STOP is written -- so
-        the design-allowed in-flight frame is not mis-counted as a failure.  The
-        handshake-window frame count is captured separately as a soft diagnostic
-        (expected <= 1) that never affects ``passed``.
+        complete naturally during the STOP handshake; the live_inhibited latch
+        guarantees no NEW active sensor frame is emitted once the device is idle.
+        Two timing subtleties are handled here:
+
+        * The design-allowed in-flight frame is excluded from the hard gate by
+          taking the baseline AFTER the handshake, not when AT+STOP is written.
+        * Cross-link STOP timing: on live-uart the STOP OK travels back over the
+          fast control link (CDC) while the last data frame is still shifting out
+          on the slow UART wire, so OK can reach the host BEFORE that tail frame.
+          Capturing the baseline the instant OK returns would mis-count the tail
+          frame as a post-OK leak.  We therefore first wait for the data links to
+          go quiet (no new bytes for ``post_stop_quiet_s``) and only then capture
+          the baseline, so the in-flight tail frame lands inside the handshake
+          window (reported by ``handshake_inflight_frames``) instead of being
+          counted as a post_stop failure.  A genuine post-OK leak keeps the links
+          busy / adds frames after the baseline and is still caught below.
         """
         assert self.uart is not None and self.cdc is not None
+        if post_stop_quiet_s is None:
+            post_stop_quiet_s = float(
+                getattr(self.arguments, "post_stop_quiet_s", 0.4))
         # Handshake window start (before AT+STOP): soft diagnostic only.
         self._handshake_start = (
             self.uart.snapshot()["sensor_frames"],
@@ -359,8 +403,11 @@ class AcceptanceSession:
         started = time.monotonic()
         self.command("AT+STOP", timeout_s=3.0, via=via, idempotent=False)
         elapsed = time.monotonic() - started
-        # C1 baseline captured the instant OK returns: the hard zero-frame gate
-        # measures only NEW active sensor frames AFTER STOP completed.
+        # Cross-link tail frame: let the data links fall silent (any in-flight
+        # frame still shifting out after the fast OK has landed) BEFORE taking
+        # the C1 baseline, so the hard zero-frame gate measures only NEW active
+        # sensor frames emitted after the device is genuinely idle.
+        self._wait_for_link_quiet(quiet_s=post_stop_quiet_s)
         self._post_stop_baseline = (
             self.uart.snapshot()["sensor_frames"],
             self.cdc.snapshot()["sensor_frames"],
@@ -370,6 +417,33 @@ class AcceptanceSession:
             raise RuntimeError(f"STOP completed in unexpected state {state['state']}")
         self.wait_for_inflight_completion()
         return elapsed, state
+
+    def _wait_for_link_quiet(self, quiet_s: float = 0.4,
+                             timeout_s: float = 3.0) -> None:
+        """Best-effort wait until both data links stop receiving bytes.
+
+        Returns once neither link has seen a new byte for ``quiet_s`` seconds, or
+        gives up after ``timeout_s`` (whichever comes first).  It deliberately
+        does NOT raise on timeout: a link that never goes quiet is either a
+        genuine post-OK leak -- which the subsequent post_stop observation window
+        counts and fails -- or a slow tail frame still arriving, and masking it
+        here would only hide evidence.  Used after STOP's OK to absorb the
+        cross-link in-flight tail frame before the post_stop baseline is taken.
+        """
+        assert self.uart is not None and self.cdc is not None
+        if quiet_s <= 0.0:
+            return
+        deadline = time.monotonic() + timeout_s
+        stable_since = time.monotonic()
+        previous = (self.uart.snapshot()["bytes"], self.cdc.snapshot()["bytes"])
+        while time.monotonic() < deadline:
+            time.sleep(0.02)
+            current = (self.uart.snapshot()["bytes"], self.cdc.snapshot()["bytes"])
+            if current != previous:
+                previous = current
+                stable_since = time.monotonic()
+            elif time.monotonic() - stable_since >= quiet_s:
+                return
 
     def handshake_inflight_frame_count(self) -> int:
         """Soft diagnostic: active sensor frames during the STOP handshake
@@ -504,6 +578,15 @@ def _run_live(session: AcceptanceSession, target: str) -> dict[str, Any]:
     assert session.uart is not None and session.cdc is not None
     # Control/polling link (default cdc on the unidirectional-UART bench).
     control_via = session.arguments.control_link
+    # Sparse AT+STATE? polling when the control link shares the data target's
+    # physical link (live-cdc) so control replies do not contend with live data
+    # frames for the CDC IN endpoint (which makes device TX go BUSY and drop);
+    # dense when they differ (live-uart).  Only the lag-over-time diagnostic
+    # sampling is affected -- the before/after source_drop & drops snapshots are
+    # still taken exactly once around the acquisition window.
+    poll_interval = _select_poll_interval(
+        control_via, target,
+        getattr(session.arguments, "state_poll_interval", None))
     # The non-target link is the opposite of the data target; it must stay
     # silent on active sensor frames (nontarget_frames==0).
     nontarget_link = "uart" if target == "CDC" else "cdc"
@@ -554,12 +637,12 @@ def _run_live(session: AcceptanceSession, target: str) -> dict[str, Any]:
             current_state = session.state(via=control_via)
         except (TimeoutError, RuntimeError, OSError, ValueError):
             poll_failures += 1
-            time.sleep(0.05)
+            time.sleep(min(poll_interval, max(0.0, deadline - time.monotonic())))
             continue
         lag = sequence_lag(current_state["last_routed_sequence"],
                            current_state["last_completed_sequence"])
         max_lag = max(max_lag, lag)
-        time.sleep(0.05)
+        time.sleep(min(poll_interval, max(0.0, deadline - time.monotonic())))
 
     # MN-3: merge pre-START and mid-stream probes; unreliable polling means the
     # non-target control link was not provably responsive throughout the run.
@@ -963,6 +1046,19 @@ def _arguments() -> argparse.Namespace:
                              "UART is physically absent, so a UART non-target AT "
                              "probe is N/A and does not fail the run; pass "
                              "--no-uart-host-to-device-absent once UART TX is wired")
+    parser.add_argument("--state-poll-interval", type=float, default=None,
+                        help="override the live AT+STATE? poll interval in "
+                             "seconds; by default it is sparse (5 s) when the "
+                             "control link shares the data target's physical "
+                             "link (live-cdc, to avoid CDC IN endpoint "
+                             "contention) and dense (0.05 s) otherwise "
+                             "(live-uart)")
+    parser.add_argument("--post-stop-quiet-s", type=float, default=0.4,
+                        help="after STOP's OK, wait this long with no new bytes "
+                             "on either data link before capturing the post_stop "
+                             "baseline, so a slow-link in-flight tail frame that "
+                             "lands after the fast OK is not mis-counted "
+                             "(recommended 0.3-0.5 s)")
     parser.add_argument("--output", type=Path)
     arguments = parser.parse_args()
     if not arguments.list_ports:
@@ -974,6 +1070,11 @@ def _arguments() -> argparse.Namespace:
             parser.error("--duration must be positive")
         if not 9600 <= arguments.uart_baud <= 3_000_000:
             parser.error("--uart-baud must be in 9600..3000000")
+        if (arguments.state_poll_interval is not None
+                and arguments.state_poll_interval <= 0.0):
+            parser.error("--state-poll-interval must be positive")
+        if arguments.post_stop_quiet_s < 0.0:
+            parser.error("--post-stop-quiet-s must be non-negative")
     return arguments
 
 
