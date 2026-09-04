@@ -47,6 +47,11 @@ _LIVE_PATTERN = re.compile(
 )
 _LIVESTREAM_PATTERN = re.compile(r"\+LIVESTREAM:(UART|CDC)")
 _BAUD_PATTERN = re.compile(r"\+BAUD:(\d+)")
+_DIAG_PATTERN = re.compile(
+    r"\+DIAG:POOL_FAIL=(\d+),INGRESS_DROP=(\d+),NOSTORE_DROP=(\d+),"
+    r"POOL_MIN=(\d+),INGRESS_PEAK=(\d+),SD_STALL_MS=(\d+),"
+    r"CDC_LIVE=(\d+),CDC_CTRL=(\d+),CDC_EXPORT=(\d+)"
+)
 
 
 class PortReader(threading.Thread):
@@ -158,7 +163,7 @@ def _parse_state(text: str) -> dict[str, Any]:
     if not all((state_match, uuid_match, sd_match, live_match)):
         raise ValueError(f"incomplete AT+STATE response: {text!r}")
     sd = tuple(int(value) for value in sd_match.groups())
-    return {
+    result: dict[str, Any] = {
         "state": state_match.group(1),
         "uuid": uuid_match.group(1).lower(),
         "uuid_source": uuid_match.group(2),
@@ -177,6 +182,22 @@ def _parse_state(text: str) -> dict[str, Any]:
         "last_routed_sequence": int(live_match.group(4)),
         "last_completed_sequence": int(live_match.group(5)),
     }
+    # Optional +DIAG telemetry (firmware >= 180776a); gracefully absent on older
+    # firmware.  Purely informational for post-hoc diagnosis, never a gate.
+    diag_match = _DIAG_PATTERN.search(text)
+    if diag_match:
+        result.update({
+            "diag_pool_fail": int(diag_match.group(1)),
+            "diag_ingress_drop": int(diag_match.group(2)),
+            "diag_nostore_drop": int(diag_match.group(3)),
+            "diag_pool_min": int(diag_match.group(4)),
+            "diag_ingress_peak": int(diag_match.group(5)),
+            "diag_sd_stall_ms": int(diag_match.group(6)),
+            "diag_cdc_live": int(diag_match.group(7)),
+            "diag_cdc_ctrl": int(diag_match.group(8)),
+            "diag_cdc_export": int(diag_match.group(9)),
+        })
+    return result
 
 
 def _sensor_frames(frames: list[Frame], archive: bool | None = None) -> list[Frame]:
@@ -720,7 +741,20 @@ def _run_live(session: AcceptanceSession, target: str) -> dict[str, Any]:
             },
             "nontarget_at_probe_pre_start": nontarget_at_pre,
             "nontarget_at_probe_midstream": nontarget_at_midstream,
-            "control_poll_failures": poll_failures}
+            "control_poll_failures": poll_failures,
+            # +DIAG telemetry (optional, firmware >= 180776a): source_drop
+            # three-way cause partition and absorption-window health.  Purely
+            # informational for post-hoc evidence; NOT a pass/fail gate.
+            "diag_diagnostics": {
+                "before": {k: v for k, v in state_before.items()
+                           if k.startswith("diag_")},
+                "after": {k: v for k, v in state_during.items()
+                          if k.startswith("diag_")},
+                "delta": ({k: state_during[k] - state_before.get(k, 0)
+                           for k in state_during if k.startswith("diag_")}
+                          if any(k.startswith("diag_") for k in state_during)
+                          else {}),
+            }}
 
 
 def _run_overwrite(session: AcceptanceSession) -> dict[str, Any]:

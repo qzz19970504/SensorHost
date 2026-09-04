@@ -223,6 +223,50 @@ def test_d2_parser_flags_tx_busy_as_transient_diagnostic() -> None:
         _parse_state("ERROR:TX_BUSY\r\n")
 
 
+def test_parse_state_extracts_diag_fields_when_present() -> None:
+    """+DIAG telemetry (firmware >= 180776a) is parsed into diag_* fields."""
+    parsed = _parse_state(
+        "+STATE:ACQUIRE\r\n"
+        "+UUID:550e8400-e29b-41d4-a716-446655440000,SOURCE=DERIVED\r\n"
+        "+SD:USED=10,CAPACITY=100,PENDING_FRAMES=2,RETAINED_CHUNKS=1,"
+        "RETAINED_FRAMES=5,OVERWRITTEN_CHUNKS=0,OVERWRITTEN_FRAMES=0,"
+        "READY=1,FORMAT_REQUIRED=0\r\n"
+        "+LIVE:TARGET=UART,DROPS_IIS=3,DROPS_JY=1,"
+        "LAST_ROUTED_SEQUENCE=100,LAST_COMPLETED_SEQUENCE=90\r\n"
+        "+DIAG:POOL_FAIL=7,INGRESS_DROP=2,NOSTORE_DROP=0,POOL_MIN=1,"
+        "INGRESS_PEAK=6,SD_STALL_MS=67,CDC_LIVE=5,CDC_CTRL=1,"
+        "CDC_EXPORT=0\r\n"
+        "+STOP_REASON:NONE\r\nOK\r\n"
+    )
+    assert parsed["diag_pool_fail"] == 7
+    assert parsed["diag_ingress_drop"] == 2
+    assert parsed["diag_nostore_drop"] == 0
+    assert parsed["diag_pool_min"] == 1
+    assert parsed["diag_ingress_peak"] == 6
+    assert parsed["diag_sd_stall_ms"] == 67
+    assert parsed["diag_cdc_live"] == 5
+    assert parsed["diag_cdc_ctrl"] == 1
+    assert parsed["diag_cdc_export"] == 0
+    # Sum CDC partitions == offset36 equivalent.
+    assert (parsed["diag_cdc_live"] + parsed["diag_cdc_ctrl"]
+            + parsed["diag_cdc_export"]) == 6
+
+
+def test_parse_state_graceful_without_diag() -> None:
+    """Older firmware without +DIAG: parsing succeeds, diag_* fields absent."""
+    parsed = _parse_state(
+        "+STATE:IDLE\r\n"
+        "+UUID:550e8400-e29b-41d4-a716-446655440000,SOURCE=DERIVED\r\n"
+        "+SD:USED=0,CAPACITY=100,PENDING_FRAMES=0,RETAINED_CHUNKS=0,"
+        "RETAINED_FRAMES=0,OVERWRITTEN_CHUNKS=0,OVERWRITTEN_FRAMES=0,"
+        "READY=1,FORMAT_REQUIRED=0\r\n"
+        "+LIVE:TARGET=UART,DROPS_IIS=0,DROPS_JY=0,"
+        "LAST_ROUTED_SEQUENCE=0,LAST_COMPLETED_SEQUENCE=0\r\nOK\r\n"
+    )
+    assert parsed["state"] == "IDLE"
+    assert "diag_pool_fail" not in parsed
+
+
 class _FakePort:
     """Records every write so a test can assert a command was (not) re-sent."""
 
