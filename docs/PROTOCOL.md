@@ -158,6 +158,28 @@ acq watermark 128|256|511
 
 `AT+STATE?` 还返回 `+STOP_REASON:<NONE|COMMAND|BUFFER_FULL|STORAGE_ERROR>` 行。其中 `BUFFER_FULL` 为历史保留值：当前固件在 SD 满时保持 `ACQUIRE` 并循环覆盖最旧 chunk（`CONTROL_EVENT_BUFFER_FULL` 分支为 no-op，不再停止采集），因此正常运行不会再产生 `BUFFER_FULL`；枚举保留仅为兼容旧记录，不要在固件侧删除。
 
+`AT+STATE?` 还返回 `+DIAG` 行，用于实机诊断 `source_drop` 三路归因与吸收窗口健康度（文本遥测，不影响 STATUS v1 二进制快照）：
+
+```text
++DIAG:POOL_FAIL=<n>,INGRESS_DROP=<n>,NOSTORE_DROP=<n>,POOL_MIN=<n>,INGRESS_PEAK=<n>,SD_STALL_MS=<n>,CDC_LIVE=<n>,CDC_CTRL=<n>,CDC_EXPORT=<n>
+```
+
+| 字段 | 含义 |
+|------|------|
+| `POOL_FAIL` | 帧池耗尽导致丢弃（source_drop 来源 A：无空闲 FrameBuffer 可分配） |
+| `INGRESS_DROP` | routerIngress 队列满导致丢弃（source_drop 来源 B：Router 无法提交到 Storage） |
+| `NOSTORE_DROP` | storage sink 拒绝导致丢弃（source_drop 来源 C：StoragePipeline 返回失败） |
+| `POOL_MIN` | 帧池历史最小空闲数（越低越接近耗尽；0 表示曾完全枯竭） |
+| `INGRESS_PEAK` | storageIngress 队列历史峰值深度（越高表示 Storage 排空越慢） |
+| `SD_STALL_MS` | 单次 SD 写操作历史最大停顿毫秒数（反映卡内部 GC/擦除延迟） |
+| `CDC_LIVE` | CDC 实时数据帧发送失败计数（`cdc_start_failures` 中 owner=LIVE 分区） |
+| `CDC_CTRL` | CDC 控制响应发送失败计数（owner=CONTROL 分区） |
+| `CDC_EXPORT` | CDC 历史导出发送失败计数（owner=EXPORT 分区） |
+
+三者之和 `CDC_LIVE + CDC_CTRL + CDC_EXPORT` 等于 STATUS v1 二进制快照偏移 36 的 `cdc_errors` 字段。`POOL_FAIL + INGRESS_DROP + NOSTORE_DROP` 之和等于 STATUS v1 偏移 28 的 `source_drops` 字段（三路归因便于定位瓶颈）。
+
+控制帧缓冲当前尺寸：`TRANSPORT_CONTROL_BUFFER_SIZE = 800`（从 640 拓宽以容纳 +DIAG 行），CLI payload 上限 `768`（= 800 − 28 V1 头 − 4 CRC），worst-case AT+STATE? 全文本约 743 字节 + NUL，不超出预算。格式化超出 CLI payload 上限时固件返回 `ERROR:RESPONSE_TOO_LARGE`（见 §6.1）。
+
 ### 6.2 实时验收门限（live-uart / live-cdc）
 
 `host/tools/realtime_archive_acceptance.py --mode live-uart|live-cdc` 使用 `LiveAcceptance` 模型判定，两种目标共享的**硬门限**为：目标链路有传感器帧、非目标链路主动传感器帧为 0、送达帧 CRC/header/length/payload 错误为 0、物理发送错误增量为 0（D1 字段来源：UART 目标取偏移 32 `uart_dma_errors` 增量、CDC 目标取偏移 36 `cdc_errors` 增量）、`source_drop` 增量为 0、STOP→OK 耗时 ≤2 s、**STOP 的 OK 返回之后**目标与非目标链路新增主动传感器帧为 0（`post_stop_sensor_frames==0`）、以及（适用时）非目标链路 `AT`/`AT+STATE?` 探测成功。`max_sequence_lag` 自 115200 抽帧实时模型起**不再是硬门限**，改为上报的新鲜度诊断证据（见下）。
