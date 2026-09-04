@@ -22,7 +22,12 @@ from sensor_host.presentation.orientation_view import AttitudeView, OrientationV
 from sensor_host.presentation.console_view import ConsoleView
 from sensor_host.presentation.diagnostics_view import DiagnosticsView
 from sensor_host.presentation.spacing import SPACE
-from sensor_host.acquisition import AcquisitionHealth, UiSnapshot
+from sensor_host.presentation.connection_view import (
+    NetworkInterfaceInfo,
+    NodeSidebar,
+    WifiConnectionPanel,
+)
+from sensor_host.acquisition import AcquisitionHealth, NodeSummary, UiSnapshot
 
 
 _DEFAULT_WINDOW_WIDTH = 1440
@@ -53,6 +58,7 @@ class MainWindow(QMainWindow):
     record_toggled = pyqtSignal(bool)
     watermark_requested = pyqtSignal(int)
     refresh_requested = pyqtSignal()
+    wifi_start_requested = pyqtSignal(object)
 
     def __init__(self) -> None:
         super().__init__()
@@ -82,7 +88,21 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.live_tab, "LIVE MONITOR")
         self.tabs.addTab(self.diagnostics_tab, "DIAGNOSTICS")
         self.tabs.addTab(self.console_tab, "CONSOLE")
-        root_layout.addWidget(self.tabs, stretch=1)
+        self.wifi_panel = WifiConnectionPanel()
+        self.node_sidebar = NodeSidebar()
+        left_panel = QWidget()
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(SPACE.normal)
+        left_layout.addWidget(self.wifi_panel)
+        left_layout.addWidget(self.node_sidebar, stretch=1)
+        self.workspace_splitter = QSplitter()
+        self.workspace_splitter.addWidget(left_panel)
+        self.workspace_splitter.addWidget(self.tabs)
+        self.workspace_splitter.setStretchFactor(0, 1)
+        self.workspace_splitter.setStretchFactor(1, 5)
+        self.workspace_splitter.setSizes([260, 1180])
+        root_layout.addWidget(self.workspace_splitter, stretch=1)
 
         self.connect_button.clicked.connect(self._emit_connect_requested)
         self.disconnect_button.clicked.connect(self.disconnect_requested)
@@ -91,18 +111,24 @@ class MainWindow(QMainWindow):
         self.watermark_combo.currentIndexChanged.connect(
             self._emit_watermark_requested
         )
+        self.transport_mode_combo.currentTextChanged.connect(
+            self._update_transport_mode
+        )
+        self._update_transport_mode()
         self.set_connected(False)
 
     def set_connected(self, is_connected: bool) -> None:
         """Apply one coherent connected or disconnected control state."""
         self.device_combo.setEnabled(not is_connected)
+        self.transport_mode_combo.setEnabled(not is_connected)
+        self.wifi_panel.setEnabled(not is_connected)
         self.connect_button.setEnabled(not is_connected)
         self.disconnect_button.setEnabled(is_connected)
         self.pause_button.setEnabled(is_connected)
         self.record_button.setEnabled(is_connected)
         self.watermark_combo.setEnabled(is_connected)
         if is_connected:
-            self.connection_badge.setText("● STREAMING")
+            self.connection_badge.setText("● CONNECTED")
             self.connection_badge.setProperty("state", "online")
         else:
             self.connection_badge.setText("DISCONNECTED")
@@ -124,6 +150,20 @@ class MainWindow(QMainWindow):
         if selected_index >= 0:
             self.device_combo.setCurrentIndex(selected_index)
 
+    def set_network_interfaces(self, interfaces: list[NetworkInterfaceInfo]) -> None:
+        """Replace the active hotspot-capable IPv4 interface list."""
+        self.wifi_panel.set_network_interfaces(interfaces)
+
+    def set_nodes(self, nodes: list[NodeSummary]) -> None:
+        """Replace the persistent multi-node sidebar content."""
+        self.node_sidebar.set_nodes(nodes)
+
+    def set_wifi_server_state(self, is_running: bool, label: str) -> None:
+        """Show listener state even before the first gateway connects."""
+        self.set_connected(is_running)
+        if is_running:
+            self.connection_badge.setText(label)
+
     def update_snapshot(self, snapshot: UiSnapshot) -> None:
         """Refresh all live views and the fixed stream-integrity summary."""
         self.vibration_view.update_snapshot(snapshot)
@@ -133,7 +173,16 @@ class MainWindow(QMainWindow):
         status = snapshot.firmware_status
         source_drops = 0 if status is None else status.source_drops
         transport_drops = 0 if status is None else status.transport_drops
-        cdc_errors = 0 if status is None else status.cdc_errors
+        is_wifi = self.transport_mode_combo.currentText() == "WI-FI"
+        physical_errors = 0
+        if status is not None:
+            physical_errors = status.uart_dma_errors if is_wifi else status.cdc_errors
+        control_state = snapshot.firmware_control_state
+        live_drops = 0
+        if control_state is not None:
+            live_drops = (control_state.live_drops_iis or 0) + (
+                control_state.live_drops_jy or 0
+            )
         uptime = "—" if status is None else f"{status.uptime_us / 1_000_000.0:.1f}s"
         health_values = {
             "sample_rate": f"{snapshot.sample_rate_hz:,.0f}",
@@ -141,7 +190,8 @@ class MainWindow(QMainWindow):
             "sequence_gaps": str(snapshot.parser_stats.sequence_gaps),
             "source_drops": str(source_drops),
             "transport_drops": str(transport_drops),
-            "cdc_errors": str(cdc_errors),
+            "physical_errors": str(physical_errors),
+            "live_drops": str(live_drops),
             "uptime": uptime,
         }
         for key, value in health_values.items():
@@ -160,6 +210,9 @@ class MainWindow(QMainWindow):
         brand.setProperty("role", "eyebrow")
         layout.addWidget(brand)
         layout.addStretch(1)
+        self.transport_mode_combo = QComboBox()
+        self.transport_mode_combo.addItems(("CDC", "WI-FI"))
+        layout.addWidget(self.transport_mode_combo)
         self.device_combo = QComboBox()
         self.device_combo.setMinimumWidth(250)
         self.device_combo.addItem("No CDC devices", "")
@@ -269,7 +322,8 @@ class MainWindow(QMainWindow):
             ("sequence_gaps", "SEQ GAP", "0"),
             ("source_drops", "SOURCE DROP", "0"),
             ("transport_drops", "TRANSPORT DROP", "0"),
-            ("cdc_errors", "CDC ERR", "0"),
+            ("physical_errors", "LINK ERR", "0"),
+            ("live_drops", "LIVE DROP", "0"),
             ("uptime", "UPTIME", "—"),
         )
         for key, title, initial_value in health_fields:
@@ -318,6 +372,14 @@ class MainWindow(QMainWindow):
         return tab
 
     def _emit_connect_requested(self) -> None:
+        if self.transport_mode_combo.currentText() == "WI-FI":
+            try:
+                config = self.wifi_panel.server_config()
+            except ValueError as error:
+                self.console_view.append_error(str(error))
+                return
+            self.wifi_start_requested.emit(config)
+            return
         device_id = str(self.device_combo.currentData() or "")
         if device_id:
             self.connect_requested.emit(device_id)
@@ -326,3 +388,9 @@ class MainWindow(QMainWindow):
         watermark = self.watermark_combo.currentData()
         if watermark is not None:
             self.watermark_requested.emit(int(watermark))
+
+    def _update_transport_mode(self) -> None:
+        is_wifi = self.transport_mode_combo.currentText() == "WI-FI"
+        self.device_combo.setHidden(is_wifi)
+        self.wifi_panel.setHidden(not is_wifi)
+        self.connect_button.setText("START LISTENER" if is_wifi else "CONNECT")

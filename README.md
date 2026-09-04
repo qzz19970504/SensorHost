@@ -1,6 +1,7 @@
 # STM32 Sensor Host
 
-PyQt6 desktop host for SDF1 acquisition over the STM32 USB CDC interface.
+PyQt6 desktop host for SDF1 acquisition over STM32 USB CDC or up to 16
+ESP32 UART-to-TCP gateways.
 
 ## Five-minute quick start
 
@@ -31,11 +32,16 @@ Remove-Item Env:QT_QPA_PLATFORM
 & .\host\.venv\Scripts\stm32-sensor-host.exe
 ```
 
-预期：出现深色 `STM32 SENSOR DESKTOP` 窗口。选择 STM32 对应的 COM 口后再点 `CONNECT`；程序不会自动打开第一个串口。
+预期：出现深色 `STM32 SENSOR DESKTOP` 窗口。CDC 模式选择 STM32 对应的
+COM 口后点 `CONNECT`；Wi-Fi 模式选择手机热点网卡后点 `START LISTENER`。
+程序不会自动打开第一个串口，也不会自动执行 START、STOP 或切换实时目标。
 
 ## What this does and does not do
 
-当前版本通过 STM32 USB CDC 接收 SDF1，显示 IIS3DWB 三轴振动时域数据、JY61PL 姿态/加速度/温度、固件 STATUS 和解析健康指标，并支持原始数据录制、UUID/LIVESTREAM/EXPORT CLI。传感器数据使用带 UUID 的 SDF v2；控制帧仍兼容 SDF v1。
+当前版本通过 STM32 USB CDC 或 ESP32 透明 TCP 透传接收同一套 SDF1，显示
+IIS3DWB 三轴振动时域数据、JY61PL 姿态/加速度/温度、完整固件状态和解析健康
+指标。Wi-Fi 现场模式由 PC 监听 TCP，可同时管理 16 个一对一 ESP32/STM32
+节点；每个节点拥有独立解析器、命令队列、图表、诊断和录制文件。
 
 姿态动画表示设备方向，不表示绝对位置。当前 JY61PL payload 也不包含原始陀螺仪和磁力计通道，因此界面不声称显示完整原始九轴数据。V1 不包含通用文件管理器、频谱、报警、云同步或 CSV 导出；CSV 在出现明确分析需求后再做离线导出。
 
@@ -43,6 +49,9 @@ Remove-Item Env:QT_QPA_PLATFORM
 
 - Windows 10/11。
 - STM32 已烧录本仓库固件并能枚举 USB CDC 虚拟串口。
+- Wi-Fi 模式下，PC 和 ESP32 必须连接同一个手机热点；热点必须允许客户端间
+  通信，Windows 防火墙必须允许上位机 TCP 入站。
+- ESP32 中预设的 PC IPv4 与 TCP 端口必须和上位机选择的热点网卡一致。
 - 缓存 Python 3.11+，或兼容的系统 Python。
 - 若需要 3D 姿态，显卡驱动和 Qt OpenGL 必须可用；否则自动使用 2D 降级视图。
 
@@ -74,26 +83,31 @@ powershell -ExecutionPolicy Bypass -File .\tools\package_host.ps1
 
 ## Usage
 
-1. 连接 STM32 Type-C/USB CDC，点 `REFRESH`。
-2. 从下拉框确认 COM 口描述，点 `CONNECT`。
-3. `LIVE MONITOR` 查看三轴波形、姿态和健康栏。
-4. `PAUSE` 只冻结显示；采集和原始录制继续。
-5. `DIAGNOSTICS` 查看 parser、host 和完整 STATUS 计数。
-6. `CONSOLE` 可发送 `AT+STATE?`、`AT+START`、`AT+STOP`、`AT+UUID?`、`AT+LIVESTREAM?`、`AT+LIVESTREAM=UART|CDC` 和 `AT+EXPORT=UART|CDC`；watermark 暂保留兼容命令 `acq watermark 128|256|511`。LIVESTREAM 目标选择仅 IDLE 可切换。
-7. 结束前点 `DISCONNECT`，程序也会在退出时请求采集线程自然停止。
-
-当前 GUI 不提供 UART/ESP32 链路切换控件。ESP32 固件和上行 transport adapter 尚未实现、也未经硬件验证；交接约束见 [`docs/ESP32_GATEWAY_REQUIREMENTS.md`](../docs/ESP32_GATEWAY_REQUIREMENTS.md)。
+1. 调试时选择 `CDC`、刷新 COM 口并点 `CONNECT`；现场使用时选择 `WI-FI`。
+2. Wi-Fi 模式选择手机热点网卡，确认其 IPv4 等于所有 ESP 固件预设的服务器
+   地址，设置 TCP/UDP 端口后点 `START LISTENER`。默认端口为 TCP 54321、UDP
+   12345；上位机会广播 `TCPCONNECT`，也可填写 ESP IPv4 进行单播唤醒。
+3. 从左侧 `DEVICES` 选择节点；列表显示别名、UUID、对端 IP、连接、录制和告警状态。
+4. `LIVE MONITOR` 查看当前节点的三轴波形、姿态和健康栏。
+5. `PAUSE` 只冻结当前显示；采集和全部原始录制继续。
+6. `DIAGNOSTICS` 查看当前节点的 parser、host、二进制 STATUS 及
+   `+STATE/+SD/+LIVE/+DIAG/+EXPORT` 结构化状态。
+7. `CONSOLE` 命令只发送给当前选中节点。程序连接后只自动查询 UUID、STATE 和
+   LIVESTREAM，不自动执行任何写命令。
+8. 结束前点 `DISCONNECT`；Wi-Fi 监听和全部节点会话会一起安全停止。
 
 ## Recording and replay
 
-点 `RECORD` 后，程序默认写入：
+点 `RECORD` 后，每个已识别的在线节点分别写入；录制期间新接入节点也会加入：
 
 ```text
-host/recordings/session-<UTC>.sdf1
-host/recordings/session-<UTC>.json
+host/recordings/<batch-UTC>/<alias>-<uuid8>/segment-001.sdf1
+host/recordings/<batch-UTC>/<alias>-<uuid8>/segment-001.json
 ```
 
-`.sdf1` 是收到的原始权威字节流；同名 `.json` 是会话时间、字节数、格式和失败状态等元数据。显示降采样不会改变录制内容。写盘队列有容量上限，磁盘落后时会报告错误而不是无界占用内存。
+断线重连会创建下一个 segment，不把断线前后伪装成连续数据。带
+`ARCHIVE_EXPORT` 标志的历史帧不进入实时图，而是保存到 `host/exports/` 下的
+独立文件。显示降采样不会改变已保存帧；写盘队列有容量上限。
 
 当前回放能力作为无 Qt 的 Python 接口和自动化测试提供，尚未做成文件浏览页面。验证录制/回放路径：
 
@@ -109,10 +123,10 @@ host/
   src/sensor_host/
     app.py                         PyQt composition root
     acquisition/                   Qt-free controller and bounded sample store
-    presentation/                  live, orientation, diagnostics and console views
-    protocol/                      authoritative SDF1 streaming parser
+    presentation/                  multi-node connection, live, diagnostics and console views
+    protocol/                      authoritative SDF1 and control-state parsers
     storage/                       bounded raw recorder and replay helpers
-    transport/                     transport protocol and CDC adapter
+    transport/                     CDC, accepted TCP and UDP wake adapters
   tests/                           unit, integration, Qt and visual baselines
   tools/capture_visual_baseline.py deterministic screenshot generator
 ```
@@ -167,6 +181,9 @@ $Python = 'C:\Users\44575\.cache\codex-runtimes\codex-primary-runtime\dependenci
 ## Troubleshooting
 
 - 找不到 COM 口：确认 Windows 设备管理器中的 STM32 Virtual COM Port，重新插拔 Type-C 后点 `REFRESH`。
+- ESP 不连接：确认 PC/ESP 在同一手机热点、PC IPv4 与 ESP 预设地址完全一致、
+  TCP/UDP 端口一致；关闭热点“客户端隔离”，并允许 Windows 防火墙 TCP 入站。
+- UDP 广播无效：从手机热点的已连接设备页面取得 ESP IPv4，填入可选单播目标。
 - 误选 CH340：PA2/PA3 上的 CH340 是 UART2 调试链路，不是当前 GUI 的 STM32 CDC 数据口。
 - 有连接但无曲线：在 `CONSOLE` 发送 `status`，确认 `acquisition_state`、IIS 接线和固件错误计数。
 - 姿态显示 `WAITING`：JY61PL 可以缺席而不影响 IIS/CDC 完整性；检查 USART1 接线和模块输出。

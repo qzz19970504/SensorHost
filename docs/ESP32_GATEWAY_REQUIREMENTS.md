@@ -4,7 +4,7 @@
 
 **Module:** Sensor Acquisition / ESP32 Gateway
 
-**Status:** Planned
+**Status:** External module integrated by the PC host; gateway firmware remains independently owned
 
 **Updated:** 2026-09-01
 
@@ -163,3 +163,4 @@ gateway_state_snapshot_t gateway_status_snapshot(void);
 |---|---|
 | 2026-08-27 | 初始 credit 型网关需求 |
 | 2026-09-01 | 改为 SD 优先、UART 无软件 credit；明确 DMA 完成不等于对端确认 |
+| 2026-09-04 | 上位机新增透明 TCP 服务端、最多 16 节点会话和现有 UDP `TCPCONNECT` 唤醒；不修改 ESP32 数据格式或固件所有权 |

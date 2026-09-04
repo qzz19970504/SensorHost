@@ -59,6 +59,45 @@ class DiagnosticsView(QWidget):
             ("bytes_received", "frames_received", "recording_failure", "last_error"),
         )
         self._add_section(
+            "CONTROL STATE",
+            (
+                "acquisition_state_text",
+                "uart_baud",
+                "device_uuid",
+                "uuid_source",
+                "livestream_target",
+                "live_drops_iis",
+                "live_drops_jy",
+                "live_last_routed_sequence",
+                "live_last_completed_sequence",
+                "sd_used",
+                "sd_capacity",
+                "sd_pending_frames",
+                "sd_retained_chunks",
+                "sd_retained_frames",
+                "sd_overwritten_chunks",
+                "sd_overwritten_frames",
+                "sd_ready",
+                "sd_format_required",
+                "export_target",
+                "export_chunk",
+                "export_frame",
+                "export_phase",
+                "export_chunks",
+                "export_frames",
+                "diag_pool_fail",
+                "diag_ingress_drop",
+                "diag_nostore_drop",
+                "diag_pool_min",
+                "diag_ingress_peak",
+                "diag_sd_stall_ms",
+                "diag_cdc_live",
+                "diag_cdc_ctrl",
+                "diag_cdc_export",
+                "stop_reason",
+            ),
+        )
+        self._add_section(
             "FIRMWARE",
             (
                 "status_version",
@@ -89,6 +128,12 @@ class DiagnosticsView(QWidget):
         self._replace_values(asdict(snapshot.parser_stats))
         if snapshot.firmware_status is not None:
             self._replace_values(asdict(snapshot.firmware_status))
+        if snapshot.firmware_control_state is not None:
+            control_values = asdict(snapshot.firmware_control_state)
+            control_values["acquisition_state_text"] = control_values.pop(
+                "acquisition_state"
+            )
+            self._replace_values(control_values)
 
     def update_health(self, health: AcquisitionHealth) -> None:
         self._replace_values(asdict(health))

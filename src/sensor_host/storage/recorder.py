@@ -94,6 +94,13 @@ class RawSessionRecorder:
         self._queue.put_nowait(copied_chunk)
         return True
 
+    def update_metadata(self, values: dict[str, object]) -> None:
+        """Merge session metadata before finalization without touching stream bytes."""
+        with self._lock:
+            if not self._is_active:
+                raise RuntimeError("recording is not active")
+            self._metadata.update(values)
+
     def stop(self) -> RecordingSummary:
         """Drain queued chunks, finalize metadata, and return a session summary."""
         with self._lock:

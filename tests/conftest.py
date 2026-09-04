@@ -18,6 +18,7 @@ GOLDEN_DIR = REPOSITORY_ROOT / "test" / "golden"
 # with a collection ImportError.  Paths are relative to this conftest directory.
 _GUI_TEST_MODULES = [
     "test_app_smoke.py",
+    "test_connection_widgets.py",
     "test_orientation.py",
     "test_packaging.py",
     "test_widgets.py",

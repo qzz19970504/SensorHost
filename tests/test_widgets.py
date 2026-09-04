@@ -8,7 +8,8 @@ from sensor_host.presentation.orientation_view import AttitudeView, OrientationV
 from sensor_host.presentation.spacing import SPACE
 from sensor_host.presentation.theme import dark_stylesheet
 from sensor_host.presentation.vibration_view import VibrationView
-from sensor_host.protocol import ParserStats
+from sensor_host.presentation.connection_view import NetworkInterfaceInfo
+from sensor_host.protocol import FirmwareControlState, ParserStats
 
 
 def make_snapshot(
@@ -43,6 +44,35 @@ def test_disconnected_window_disables_stream_controls(qtbot) -> None:
     assert window.connection_badge.text() == "DISCONNECTED"
 
 
+def test_window_switches_between_cdc_and_wifi_connection_controls(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.set_network_interfaces(
+        [NetworkInterfaceInfo("Phone Hotspot", "192.168.43.100", "255.255.255.0")]
+    )
+
+    window.transport_mode_combo.setCurrentText("WI-FI")
+
+    assert window.device_combo.isHidden()
+    assert not window.wifi_panel.isHidden()
+    assert window.connect_button.text() == "START LISTENER"
+
+
+def test_window_emits_validated_wifi_configuration(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.set_network_interfaces(
+        [NetworkInterfaceInfo("Phone Hotspot", "192.168.43.100", "255.255.255.0")]
+    )
+    window.transport_mode_combo.setCurrentText("WI-FI")
+
+    with qtbot.waitSignal(window.wifi_start_requested) as signal:
+        window.connect_button.click()
+
+    assert signal.args[0].local_ipv4 == "192.168.43.100"
+    assert signal.args[0].tcp_port == 54321
+
+
 def test_live_dashboard_uses_balanced_splitters_and_health_metrics(qtbot) -> None:
     window = MainWindow()
     qtbot.addWidget(window)
@@ -56,7 +86,8 @@ def test_live_dashboard_uses_balanced_splitters_and_health_metrics(qtbot) -> Non
         "sequence_gaps",
         "source_drops",
         "transport_drops",
-        "cdc_errors",
+        "physical_errors",
+        "live_drops",
         "uptime",
     }
     assert all(
@@ -179,3 +210,33 @@ def test_console_and_diagnostics_pages_use_section_padding(qtbot) -> None:
     assert console.layout().spacing() == SPACE.normal
     margins = diagnostics.grid.contentsMargins()
     assert (margins.left(), margins.top()) == (SPACE.section, SPACE.section)
+
+
+def test_diagnostics_exposes_latest_structured_firmware_fields(qtbot) -> None:
+    view = DiagnosticsView()
+    qtbot.addWidget(view)
+    snapshot = make_snapshot([], [], [], [])
+    snapshot = UiSnapshot(
+        time_s=snapshot.time_s,
+        x_g=snapshot.x_g,
+        y_g=snapshot.y_g,
+        z_g=snapshot.z_g,
+        orientation=None,
+        orientation_age_s=None,
+        firmware_status=None,
+        parser_stats=ParserStats(),
+        sample_rate_hz=0.0,
+        firmware_control_state=FirmwareControlState(
+            acquisition_state="ACQUIRE",
+            livestream_target="UART",
+            sd_ready=True,
+            diag_sd_stall_ms=12,
+        ),
+    )
+
+    view.update_snapshot(snapshot)
+
+    assert view.value_labels["acquisition_state_text"].text() == "ACQUIRE"
+    assert view.value_labels["livestream_target"].text() == "UART"
+    assert view.value_labels["sd_ready"].text() == "True"
+    assert view.value_labels["diag_sd_stall_ms"].text() == "12"

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sys
 
+from PyQt6.QtCore import QSettings
 from PyQt6.QtWidgets import QApplication
 
 from sensor_host.presentation import (
@@ -14,6 +15,7 @@ from sensor_host.presentation import (
     load_application_fonts,
 )
 from sensor_host.transport import CdcSerialTransport
+from sensor_host.presentation.connection_view import discover_ipv4_interfaces
 
 
 SMOKE_TEST_ARGUMENT = "--smoke-test"
@@ -46,9 +48,11 @@ def _run_smoke_test(application: QApplication) -> int:
 def _run_interactive(application: QApplication) -> int:
     """Wire transports and controllers, then run the interactive event loop."""
     window = MainWindow()
-    controller = AppController(CdcSerialTransport)
+    settings = QSettings("OpenAI", "STM32SensorHost")
+    controller = AppController(CdcSerialTransport, settings=settings)
 
     def refresh_devices() -> None:
+        window.set_network_interfaces(discover_ipv4_interfaces())
         discovery = CdcSerialTransport()
         try:
             devices = discovery.discover()
@@ -58,6 +62,7 @@ def _run_interactive(application: QApplication) -> int:
         window.set_devices([(device.device_id, device.label) for device in devices])
 
     window.connect_requested.connect(controller.connect_device)
+    window.wifi_start_requested.connect(controller.start_wifi_server)
     window.disconnect_requested.connect(controller.disconnect_device)
     window.pause_toggled.connect(controller.set_display_paused)
     window.record_toggled.connect(controller.set_recording)
@@ -72,8 +77,13 @@ def _run_interactive(application: QApplication) -> int:
     controller.cli_response.connect(window.console_view.append_response)
     controller.error_raised.connect(window.console_view.append_error)
     controller.connection_changed.connect(lambda connected, _device: window.set_connected(connected))
+    controller.wifi_server_changed.connect(window.set_wifi_server_state)
+    controller.nodes_changed.connect(window.set_nodes)
+    window.node_sidebar.node_selected.connect(controller.select_node)
+    window.node_sidebar.alias_requested.connect(controller.set_alias)
     application.aboutToQuit.connect(controller.disconnect_device)
     refresh_devices()
+    window.wifi_panel.restore_settings(settings)
     window.show()
     return application.exec()
 
