@@ -83,6 +83,32 @@ class AcquisitionController:
         """Queue a firmware status request."""
         self.enqueue_command("AT+STATE?")
 
+    def request_uuid(self) -> None:
+        """Queue a UUID and provenance query."""
+        self.enqueue_command("AT+UUID?")
+
+    def set_uuid(self, value: str) -> None:
+        """Queue a canonical UUID update; firmware enforces IDLE state."""
+        self.enqueue_command(f"AT+UUID={value}")
+
+    def request_livestream(self) -> None:
+        """Queue a query for the current live-stream target."""
+        self.enqueue_command("AT+LIVESTREAM?")
+
+    def set_livestream(self, target: str) -> None:
+        """Set live-stream target to UART or CDC (IDLE only)."""
+        normalized = target.upper()
+        if normalized not in {"UART", "CDC"}:
+            raise ValueError("live target must be UART or CDC")
+        self.enqueue_command(f"AT+LIVESTREAM={normalized}")
+
+    def export_archive(self, target: str = "UART") -> None:
+        """Start explicit archive export on UART or CDC."""
+        normalized = target.upper()
+        if normalized not in {"UART", "CDC"}:
+            raise ValueError("export target must be UART or CDC")
+        self.enqueue_command(f"AT+EXPORT={normalized}")
+
     def set_recorder(self, recorder: RawSessionRecorder | None) -> None:
         """Attach or detach an already-started recorder at a chunk boundary."""
         with self._recorder_lock:

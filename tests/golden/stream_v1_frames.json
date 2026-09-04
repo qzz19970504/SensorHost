@@ -1,36 +1,45 @@
 {
   "protocol": "SDF1",
-  "version": 1,
+  "versions": [
+    1,
+    2
+  ],
   "frames": [
     {
       "name": "iis3dwb_fifo",
       "offset": 0,
-      "length": 46,
+      "length": 62,
       "message_type": 1,
+      "version": 2,
+      "device_uuid": "00112233-4455-6677-8899-aabbccddeeff",
       "flags": 1,
       "sequence": 1,
       "timestamp_us": 1000000,
       "item_count": 2,
       "payload_hex": "000102030405060708090a0b0c0d",
-      "crc32": 4161595075
+      "crc32": 3308885788
     },
     {
       "name": "jy61pl_sample",
-      "offset": 46,
-      "length": 46,
+      "offset": 62,
+      "length": 62,
       "message_type": 2,
+      "version": 2,
+      "device_uuid": "00112233-4455-6677-8899-aabbccddeeff",
       "flags": 0,
       "sequence": 2,
       "timestamp_us": 1000100,
       "item_count": 1,
       "payload_hex": "3412feff0080ff7f000001000180",
-      "crc32": 3585562361
+      "crc32": 2816535468
     },
     {
       "name": "status",
-      "offset": 92,
+      "offset": 124,
       "length": 96,
       "message_type": 3,
+      "version": 1,
+      "device_uuid": null,
       "flags": 2,
       "sequence": 3,
       "timestamp_us": 1000200,
@@ -40,9 +49,11 @@
     },
     {
       "name": "cli_response",
-      "offset": 188,
+      "offset": 220,
       "length": 47,
       "message_type": 4,
+      "version": 1,
+      "device_uuid": null,
       "flags": 0,
       "sequence": 4,
       "timestamp_us": 1000300,

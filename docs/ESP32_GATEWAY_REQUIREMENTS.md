@@ -1,6 +1,6 @@
 # ESP32 通讯网关交接需求
 
-> ESP32 通过无硬件流控的 3 Mbaud UART 接收 STM32 的 SDF1 数据流，以 PSRAM 吸收接收与上行业务之间的抖动，并把原始帧透明交给后续消费者。
+> ESP32 通过无硬件流控的 UART 接收 STM32 的 SDF1 数据流（生产验收可将 UART2 配置为 3 Mbaud），以 PSRAM 吸收接收与上行业务之间的抖动，并把原始帧透明交给后续消费者。
 
 **Module:** Sensor Acquisition / ESP32 Gateway
 
@@ -10,15 +10,15 @@
 
 ## 1. 当前 STM32 合同
 
-生产固件运行在 STM32F407VET6（LQFP100）。IIS3DWB 与 JY61PL 的完整 SDF1 帧先提交到板载 HHW1GS60C-B3 裸扇区循环队列，再按最旧优先顺序从 UART2 发送。
+生产固件运行在 STM32F407VET6（LQFP100）。IIS3DWB 与 JY61PL 在统一分流点编码为 SDF v2（44 字节头、16 字节 UUID、全局 sequence），原始帧独立提交到板载 HHW1GS60C-B3 裸扇区循环队列；UART2 仅发送丢旧保新的实时副本或收到 `AT+EXPORT=UART` 后的历史副本。角色划分（与主机验收一致）：UART/CDC 实时链路只保证**实时新鲜度**（newest-wins 抽帧送达最新帧；在当前 115200 实机链路下带宽不足时大量 live-drop 与较大 sequence 滞后属物理预期、不判负），SD 存档保证**完整权威**（`source_drop=0`）；因此实时 sequence 滞后是新鲜度诊断而非硬门限，完整性以 SD 侧 `source_drop=0` 为准。
 
-- UART2：`3_000_000` baud、8N1、无 RTS/CTS。
-- STM32 启动默认数据链路：UART2。
+- UART2：上电默认 `115200` baud（可在 IDLE 持久化至 `3_000_000`）、8N1、无 RTS/CTS。
+- STM32 启动默认实时配置：`AT+LIVESTREAM=UART`（冷启动默认）；实时副本只发送到 LIVESTREAM 选定的唯一目标。CDC 被选中但未连接时不自动回退 UART。非目标链路仍可收发 AT 控制响应。
 - 不存在 `credit` 或其他软件流控命令；旧命令会被当作未知命令。
-- UART DMA 启动失败、错误或中止：SD 尾记录不回收，稍后重试。
-- UART DMA 成功：STM32 回收该 SD 记录。
+- UART 实时 DMA 启动失败、错误或中止只丢实时副本；SD 尾记录不回收，稍后可由 `EXPORT` 重发。
+- `EXPORT=UART|CDC` 逐帧发送历史数据，整 chunk 的目标 DMA 完成后才回收；中断或掉电允许最多重复一个 chunk。
 - CLI_RESPONSE 与 STATUS 不经过 SD，始终返回命令来源链路。
-- 传感器流固定由 UART2 权威排空；CDC 仅作 STM32 本地尽力镜像，`transport cdc|uart` 不再受支持。
+- `AT+EXPORT=UART` 只向 UART 发送历史帧，`AT+EXPORT=CDC` 只向 CDC 发送历史帧；`transport cdc|uart` 不再受支持。SD 是当前容量窗口内的权威存档，满卡覆盖最旧 chunk 并累计覆盖计数。
 
 重要限制：UART DMA 成功只证明字节已离开 STM32 外设，不能证明 ESP32 已写入 PSRAM 或完成上行业务。因此本版本是“STM32 本地断线缓冲”，不是端到端确认交付协议。
 
@@ -27,7 +27,7 @@
 ### 2.1 必须实现
 
 - UART RX 持续接收和错误统计。
-- SDF1 V1 任意分片解析、CRC 校验、magic 重同步和 sequence gap 统计。
+- SDF1 V1/V2 任意分片解析、CRC 校验、magic 重同步和 sequence gap 统计；V2 传感器头固定 44 字节并校验 UUID。
 - PSRAM 中明确所有权、永不覆盖未释放数据的环形缓冲。
 - 将完整原始 SDF1 帧透明交给网络、本地存储或其他消费者。
 - 对 RX 溢出、CRC storm、sequence 重置和消费者阻塞进行可观测恢复。

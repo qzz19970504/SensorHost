@@ -10,6 +10,12 @@ from sensor_host.acquisition import AcquisitionHealth, UiSnapshot
 from sensor_host.presentation.spacing import SPACE
 
 
+# N-8: STATUS v1 offset 8 (legacy UART credit) is frozen at 0 to preserve the
+# binary layout.  Annotate it in the grid so a stuck 0 is not mistaken for a
+# live bug.  The StatusV1 dataclass field name and wire semantics are unchanged.
+_RESERVED_ALWAYS_ZERO = frozenset({"uart_credit_bytes"})
+
+
 class DiagnosticsView(QWidget):
     """Replace counter labels in place without allocating per-frame widgets."""
 
@@ -96,7 +102,10 @@ class DiagnosticsView(QWidget):
         self.grid.addWidget(heading, self._next_row, 0, 1, 2)
         self._next_row += 1
         for field_name in fields:
-            label = QLabel(field_name.replace("_", " ").upper())
+            label_text = field_name.replace("_", " ").upper()
+            if field_name in _RESERVED_ALWAYS_ZERO:
+                label_text += " (RESERVED, ALWAYS 0)"
+            label = QLabel(label_text)
             label.setProperty("role", "muted")
             value = QLabel("—")
             self.grid.addWidget(label, self._next_row, 0)
