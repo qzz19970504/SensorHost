@@ -187,6 +187,7 @@ def test_wifi_form_scrolls_when_height_is_constrained(qtbot) -> None:
     # The form is taller than the constrained panel, so every field stays
     # reachable through the scroll area instead of being clipped.
     assert panel.form_scroll_area.verticalScrollBar().maximum() > 0
+    assert panel.form_scroll_area.horizontalScrollBar().maximum() == 0
     assert panel.server_config().tcp_port == 54321
 
 
