@@ -201,6 +201,7 @@ class NodeSidebar(QFrame):
         super().__init__()
         self.setProperty("card", True)
         self._selected_node_id: str | None = None
+        self._dirty_aliases: dict[str, str] = {}
         layout = QVBoxLayout(self)
         layout.setContentsMargins(SPACE.section, SPACE.section, SPACE.section, SPACE.section)
         layout.setSpacing(SPACE.compact)
@@ -219,7 +220,9 @@ class NodeSidebar(QFrame):
         layout.addWidget(self.alias_edit)
         self.save_alias_button = QPushButton("SAVE ALIAS")
         self.save_alias_button.clicked.connect(self._emit_alias_requested)
+        self.save_alias_button.setEnabled(False)
         layout.addWidget(self.save_alias_button)
+        self.alias_edit.textChanged.connect(self._on_alias_text_changed)
 
     @property
     def selected_node_id(self) -> str | None:
@@ -292,11 +295,27 @@ class NodeSidebar(QFrame):
             return
         alias = str(item.data(_ALIAS_ROLE))
         uuid_suffix = str(item.data(_UUID_ROLE))
-        self._selected_node_id = str(item.data(_NODE_ID_ROLE))
-        self.alias_edit.setText(alias)
+        node_id = str(item.data(_NODE_ID_ROLE))
+        self._selected_node_id = node_id
+        draft = self._dirty_aliases.get(node_id)
+        self.alias_edit.setText(alias if draft is None else draft)
         self.target_label.setText(f"TARGET {alias} · {uuid_suffix}")
         if emit:
             self.node_selected.emit(self._selected_node_id)
+
+    def _on_alias_text_changed(self, text: str) -> None:
+        node_id = self._selected_node_id
+        item = self.node_list.currentItem()
+        if node_id is None or item is None:
+            self.save_alias_button.setEnabled(False)
+            return
+        stored = str(item.data(_ALIAS_ROLE))
+        if text != stored:
+            self._dirty_aliases[node_id] = text
+        else:
+            self._dirty_aliases.pop(node_id, None)
+        normalized = len(text.strip())
+        self.save_alias_button.setEnabled(1 <= normalized <= 64)
 
     def _row_for_node_id(self, node_id: str | None) -> int:
         if not node_id:
@@ -313,6 +332,6 @@ class NodeSidebar(QFrame):
     def _emit_alias_requested(self) -> None:
         item = self.node_list.currentItem()
         if item is not None:
-            self.alias_requested.emit(
-                str(item.data(_NODE_ID_ROLE)), self.alias_edit.text()
-            )
+            node_id = str(item.data(_NODE_ID_ROLE))
+            self._dirty_aliases.pop(node_id, None)
+            self.alias_requested.emit(node_id, self.alias_edit.text())

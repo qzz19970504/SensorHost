@@ -188,3 +188,42 @@ def test_wifi_form_scrolls_when_height_is_constrained(qtbot) -> None:
     # reachable through the scroll area instead of being clipped.
     assert panel.form_scroll_area.verticalScrollBar().maximum() > 0
     assert panel.server_config().tcp_port == 54321
+
+
+def test_unsaved_alias_draft_survives_node_refresh(qtbot) -> None:
+    sidebar = NodeSidebar()
+    qtbot.addWidget(sidebar)
+    node = NodeSummary(
+        node_id="wifi-a",
+        transport_kind=TransportKind.WIFI,
+        peer="192.168.43.20:5000",
+        connection_state=ConnectionState.STREAMING,
+        device_uuid=uuid.UUID("550e8400-e29b-41d4-a716-446655440000"),
+        alias="A",
+    )
+    sidebar.set_nodes([node])
+    sidebar.alias_edit.setText("Draft Name")
+
+    sidebar.set_nodes([node])
+
+    assert sidebar.alias_edit.text() == "Draft Name"
+
+
+def test_save_alias_disabled_without_valid_length(qtbot) -> None:
+    sidebar = NodeSidebar()
+    qtbot.addWidget(sidebar)
+    node = NodeSummary(
+        node_id="wifi-a",
+        transport_kind=TransportKind.WIFI,
+        peer="192.168.43.20:5000",
+        connection_state=ConnectionState.STREAMING,
+        alias="A",
+    )
+    sidebar.set_nodes([node])
+    assert sidebar.save_alias_button.isEnabled()
+
+    sidebar.alias_edit.clear()
+    assert not sidebar.save_alias_button.isEnabled()
+
+    sidebar.alias_edit.setText("x" * 65)
+    assert not sidebar.save_alias_button.isEnabled()
