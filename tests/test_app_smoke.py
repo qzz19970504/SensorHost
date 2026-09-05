@@ -1,5 +1,6 @@
 import queue
 import struct
+import time
 import uuid
 import zlib
 
@@ -72,6 +73,12 @@ class RecordingIdleTransport:
 class FailingReadTransport(RecordingIdleTransport):
     def read(self, max_bytes: int, timeout_s: float) -> bytes:
         raise OSError("device disconnected")
+
+
+class SlowCloseTransport(RecordingIdleTransport):
+    def close(self) -> None:
+        time.sleep(0.2)
+        super().close()
 
 
 class QueueTransport(RecordingIdleTransport):
@@ -543,6 +550,21 @@ def test_second_archive_waits_for_its_own_terminal_event(qtbot, tmp_path, monkey
         assert len(list((tmp_path / "host" / "exports").rglob("*.sdf1"))) == 2
     finally:
         controller.disconnect_device()
+
+
+def test_disconnect_with_slow_transport_stays_within_stop_timeout(qtbot) -> None:
+    controller = AppController(SlowCloseTransport)
+    controller.connect_device("FAKE")
+    qtbot.waitUntil(lambda: controller.is_running, timeout=1000)
+
+    started = time.perf_counter()
+    controller.disconnect_device()
+    elapsed = time.perf_counter() - started
+
+    # UI-21: a slow transport close must not block beyond the thread-stop budget;
+    # staying within it means no lifecycle refactor is warranted yet.
+    assert elapsed < 3.0
+    assert not controller.is_running
 
 
 def test_window_minimum_fits_small_workspaces(qtbot) -> None:
