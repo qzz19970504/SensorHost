@@ -644,3 +644,14 @@ def test_error_banner_is_non_modal_and_dismissible(qtbot) -> None:
 
     window.error_clear_button.click()
     assert not window.error_banner_frame.isVisible()
+
+
+def test_record_button_reflects_actual_recording_sessions(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    window.set_nodes([online_node()])
+    assert window.record_button.text() == "● RECORD"
+
+    window.set_nodes([replace(online_node(), is_recording=True)])
+    assert "1" in window.record_button.text()

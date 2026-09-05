@@ -259,6 +259,14 @@ class MainWindow(QMainWindow):
             in {ConnectionState.CONNECTED, ConnectionState.STREAMING}
             for node in nodes
         )
+        recording_count = sum(1 for node in nodes if node.is_recording)
+        self.record_button.setText(
+            f"● RECORD · {recording_count}" if recording_count else "● RECORD"
+        )
+        self.record_button.setToolTip(
+            f"recording {recording_count} of {len(nodes)} session(s); "
+            "write failures surface in the error banner"
+        )
         self._refresh_node_controls()
 
     def set_wifi_server_state(self, is_running: bool, label: str) -> None:
