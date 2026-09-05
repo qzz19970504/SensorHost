@@ -9,4 +9,13 @@
   build-venv 内 pytest 200 passed、打包 `--smoke-test` 通过。
 - UI-21：慢传输断开时延在 3s 线程停止预算内 → 按计划不重构生命周期。
 - 手册：`docs/USER_MANUAL_zh-CN.md` 已更新新 UI 状态/控件，硬件操作顺序未改。
-- 未验证：硬件实机验收（无设备/授权，按计划报告"硬件未验"）。
+- 硬件（CDC，COM6 VID_0483/PID_5740）：`tools/cdc_acceptance.py` 实机运行
+  （`acceptance.json` WM256、`acceptance-wm511.json` WM511）：连接、IDLE→
+  LIVESTREAM=CDC→START 握手全 true、CRC 0、记录字节=接收字节、回放帧数一致、
+  结束恢复 IDLE+LIVESTREAM=UART 成功。但固件 `source_drops` 增量非零
+  （WM256: 2477、WM511: 1307）且 WM256 有 sequence_gaps 609（WM511 降至 11）
+  → 验收 `passed=False`，属设备/固件侧 IIS 源丢弃，与上位机 UI 无关。
+- 实机 UI 验证：`native-cdc-live.png`（原生 windows，真实 CDC 数据）确认目标摘要、
+  节点高亮、无节点门控、未知计数 `—`、Console 未读标记、原生 OpenGL 均正确。
+- Wi-Fi：当前环境无法测试（无热点/ESP），未验。
+- 仍待原生环境：OS 显示缩放切换/多屏/读屏/高对比度；16 节点负载。
