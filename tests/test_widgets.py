@@ -1,12 +1,15 @@
 import numpy as np
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QFrame, QLabel
 
 from sensor_host.acquisition import UiSnapshot
+from sensor_host.presentation.controls import IntegratedComboBox
 from sensor_host.presentation.main_window import MainWindow
 from sensor_host.presentation.console_view import ConsoleView
 from sensor_host.presentation.diagnostics_view import DiagnosticsView
 from sensor_host.presentation.orientation_view import AttitudeView, OrientationView
 from sensor_host.presentation.spacing import SPACE
-from sensor_host.presentation.theme import dark_stylesheet
+from sensor_host.presentation.theme import dark_stylesheet, load_application_fonts
 from sensor_host.presentation.vibration_view import VibrationView
 from sensor_host.presentation.connection_view import NetworkInterfaceInfo
 from sensor_host.protocol import FirmwareControlState, ParserStats
@@ -178,14 +181,15 @@ def test_balanced_spacing_tokens_are_stable() -> None:
     ) == (4, 8, 12, 16, 24)
 
 
-def test_tabs_and_pages_have_breathing_room(qtbot) -> None:
+def test_tabs_are_compact_without_crowding_live_content(qtbot) -> None:
     window = MainWindow()
     qtbot.addWidget(window)
     margins = window.live_tab.layout().contentsMargins()
 
-    assert margins.top() == SPACE.section
+    assert window.tabs.tabBar().height() == 38
+    assert margins.top() == SPACE.compact
     assert window.live_tab.layout().spacing() == SPACE.normal
-    assert "padding: 12px 24px" in dark_stylesheet()
+    assert "padding: 8px 18px" in dark_stylesheet()
 
 
 def test_card_and_metric_spacing_is_balanced(qtbot) -> None:
@@ -199,6 +203,188 @@ def test_card_and_metric_spacing_is_balanced(qtbot) -> None:
     assert all(
         layout.spacing() == SPACE.tight for layout in window.health_field_layouts
     )
+
+
+def test_live_cards_use_article_style_titles_and_accents(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    expected_titles = {
+        "3-Axis Vibration",
+        "JY61PL Orientation",
+        "Attitude & Acceleration",
+        "Stream Health",
+    }
+    title_labels = {
+        label.text(): label
+        for label in window.live_tab.findChildren(QLabel)
+        if label.property("role") == "card-title"
+    }
+    title_accents = [
+        frame
+        for frame in window.live_tab.findChildren(QFrame)
+        if frame.property("role") == "title-accent"
+    ]
+
+    assert set(title_labels) == expected_titles
+    assert len(title_accents) == len(expected_titles)
+    assert all(accent.minimumWidth() == 3 for accent in title_accents)
+    assert all(accent.minimumHeight() == 20 for accent in title_accents)
+
+
+def test_acquisition_toolbar_is_flat_and_vertically_centered(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.resize(1080, 700)
+    window.show()
+    qtbot.wait(20)
+
+    groups = [
+        frame
+        for frame in window.acquisition_toolbar.findChildren(QFrame)
+        if frame.property("controlGroup") is True
+    ]
+
+    assert groups == []
+    assert (
+        window.acquisition_toolbar.layout().alignment()
+        & Qt.AlignmentFlag.AlignVCenter
+    )
+    assert window.app_header.layout().alignment() & Qt.AlignmentFlag.AlignVCenter
+    assert window.window_combo.minimumWidth() >= 72
+    assert window.watermark_combo.minimumWidth() >= 72
+
+
+def test_vibration_actions_live_in_card_header(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    actions = window.vibration_view.header_actions
+
+    assert actions.property("role") == "card-actions"
+    assert actions.parentWidget().property("role") == "card-header"
+    assert window.vibration_view.layout().indexOf(actions) == -1
+    assert actions.layout().indexOf(window.vibration_view.x_toggle) >= 0
+    assert actions.layout().indexOf(window.vibration_view.auto_y_button) >= 0
+    assert all(
+        toggle.property("role") == "channel-toggle"
+        for toggle in (
+            window.vibration_view.x_toggle,
+            window.vibration_view.y_toggle,
+            window.vibration_view.z_toggle,
+        )
+    )
+
+
+def test_combo_boxes_use_integrated_painted_chevron(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    combos = (
+        window.device_combo,
+        window.window_combo,
+        window.watermark_combo,
+    )
+
+    assert all(isinstance(combo, IntegratedComboBox) for combo in combos)
+    assert all(len(combo.arrow_points()) == 3 for combo in combos)
+    assert all(
+        max(point.x() for point in combo.arrow_points()) < combo.width()
+        for combo in combos
+    )
+
+
+def test_vibration_pause_badge_only_appears_while_paused(qtbot) -> None:
+    view = VibrationView()
+    qtbot.addWidget(view)
+    view.show()
+
+    assert not view.paused_badge.isVisible()
+
+    view.set_paused(True)
+    assert view.paused_badge.isVisible()
+    assert view.paused_badge.text() == "DISPLAY PAUSED"
+
+    view.set_paused(False)
+    assert not view.paused_badge.isVisible()
+
+
+def test_splitters_keep_large_hit_area_and_balanced_proportions(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.resize(1440, 900)
+    window.show()
+    qtbot.wait(20)
+
+    assert window.main_splitter.handleWidth() == 12
+    assert window.right_splitter.handleWidth() == 12
+    assert window.main_splitter.handle(1).width() == 12
+    assert window.right_splitter.handle(1).height() == 12
+    main_sizes = window.main_splitter.sizes()
+    right_sizes = window.right_splitter.sizes()
+    assert main_sizes[0] / main_sizes[1] >= 2.0
+    assert 1.1 <= right_sizes[0] / right_sizes[1] <= 1.5
+
+
+def test_theme_does_not_expand_splitter_hit_areas(qtbot, qapp) -> None:
+    original_stylesheet = qapp.styleSheet()
+    qapp.setStyleSheet(dark_stylesheet())
+    try:
+        window = MainWindow()
+        qtbot.addWidget(window)
+        window.resize(1440, 900)
+        window.show()
+        qtbot.wait(20)
+
+        assert window.main_splitter.handle(1).width() == 12
+        assert window.right_splitter.handle(1).height() == 12
+        right_sizes = window.right_splitter.sizes()
+        assert 1.1 <= right_sizes[0] / right_sizes[1] <= 1.5
+    finally:
+        qapp.setStyleSheet(original_stylesheet)
+
+
+def test_short_dashboard_reflows_attitude_metrics_without_overlap(qtbot, qapp) -> None:
+    original_stylesheet = qapp.styleSheet()
+    load_application_fonts()
+    qapp.setStyleSheet(dark_stylesheet())
+    try:
+        window = MainWindow()
+        qtbot.addWidget(window)
+        window.resize(1080, 700)
+        window.show()
+        qtbot.wait(20)
+
+        layout = window.attitude_view.layout()
+        columns = [
+            layout.getItemPosition(index)[1] for index in range(layout.count())
+        ]
+        assert max(columns) == 3
+        assert all(
+            label.height() >= label.sizeHint().height()
+            for label in window.attitude_view.value_labels.values()
+        )
+    finally:
+        qapp.setStyleSheet(original_stylesheet)
+
+
+def test_theme_defines_transparent_labels_and_structured_card_roles() -> None:
+    stylesheet = dark_stylesheet()
+
+    assert "QLabel {" in stylesheet
+    assert "background: transparent" in stylesheet
+    assert 'QLabel[role="card-title"]' in stylesheet
+    assert 'QFrame[role="title-accent"]' in stylesheet
+
+
+def test_theme_integrates_combo_arrow_into_rounded_input() -> None:
+    stylesheet = dark_stylesheet()
+
+    assert "QComboBox::drop-down" in stylesheet
+    assert "background: transparent" in stylesheet
+    assert "border: 0" in stylesheet
+    assert "QComboBox::down-arrow" in stylesheet
+    assert 'QCheckBox[role="channel-toggle"]' in stylesheet
 
 
 def test_console_and_diagnostics_pages_use_section_padding(qtbot) -> None:

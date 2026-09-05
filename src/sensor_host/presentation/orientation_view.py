@@ -9,7 +9,7 @@ from collections.abc import Sequence
 import numpy as np
 from numpy.typing import NDArray
 from PyQt6.QtCore import QPointF, Qt
-from PyQt6.QtGui import QColor, QPainter, QPen, QPolygonF
+from PyQt6.QtGui import QColor, QPainter, QPen, QPolygonF, QResizeEvent
 from PyQt6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -26,6 +26,8 @@ from sensor_host.presentation.spacing import SPACE
 
 
 _STALE_AFTER_S = 0.5
+_COMPACT_WINDOW_HEIGHT = 800
+_COMPACT_FIELD_SPACING = 2
 _DEVICE_VERTICES = np.asarray(
     [
         [-1.2, -0.75, -0.18],
@@ -275,7 +277,11 @@ class AttitudeView(QFrame):
         layout = QGridLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setHorizontalSpacing(SPACE.normal)
-        layout.setVerticalSpacing(SPACE.compact)
+        layout.setVerticalSpacing(SPACE.tight)
+        self._grid = layout
+        self._is_compact = False
+        self._field_widgets: list[QFrame] = []
+        self._title_labels: list[QLabel] = []
         self.value_labels: dict[str, QLabel] = {}
         for index, (key, title, unit) in enumerate(self._FIELDS):
             row, column = divmod(index, 2)
@@ -283,9 +289,9 @@ class AttitudeView(QFrame):
             field_layout = QVBoxLayout(field)
             field_layout.setContentsMargins(
                 SPACE.compact,
+                0,
                 SPACE.compact,
-                SPACE.compact,
-                SPACE.compact,
+                0,
             )
             field_layout.setSpacing(SPACE.tight)
             title_label = QLabel(f"{title} · {unit}")
@@ -295,7 +301,47 @@ class AttitudeView(QFrame):
             field_layout.addWidget(title_label)
             field_layout.addWidget(value_label)
             layout.addWidget(field, row, column)
+            self._field_widgets.append(field)
+            self._title_labels.append(title_label)
             self.value_labels[key] = value_label
+
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - Qt API name
+        super().resizeEvent(event)
+        is_compact = self.window().height() < _COMPACT_WINDOW_HEIGHT
+        if is_compact == self._is_compact:
+            return
+        self._apply_layout(is_compact)
+
+    def _apply_layout(self, is_compact: bool) -> None:
+        self._is_compact = is_compact
+        column_count = 4 if is_compact else 2
+        horizontal_spacing = SPACE.tight if is_compact else SPACE.normal
+        field_horizontal_margin = SPACE.tight if is_compact else SPACE.compact
+        field_spacing = _COMPACT_FIELD_SPACING if is_compact else SPACE.tight
+        title_role = "health-label" if is_compact else "muted"
+        value_role = "metric-compact" if is_compact else "metric"
+
+        self._grid.setHorizontalSpacing(horizontal_spacing)
+        for index, field in enumerate(self._field_widgets):
+            row, column = divmod(index, column_count)
+            self._grid.addWidget(field, row, column)
+            field.layout().setContentsMargins(
+                field_horizontal_margin,
+                0,
+                field_horizontal_margin,
+                0,
+            )
+            field.layout().setSpacing(field_spacing)
+            self._set_label_role(self._title_labels[index], title_role)
+            key = self._FIELDS[index][0]
+            self._set_label_role(self.value_labels[key], value_role)
+        self.updateGeometry()
+
+    @staticmethod
+    def _set_label_role(label: QLabel, role: str) -> None:
+        label.setProperty("role", role)
+        label.style().unpolish(label)
+        label.style().polish(label)
 
     def update_snapshot(self, snapshot: UiSnapshot) -> None:
         """Update numeric attitude metrics from the latest sample."""

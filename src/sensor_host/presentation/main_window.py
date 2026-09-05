@@ -4,20 +4,19 @@ from __future__ import annotations
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QComboBox,
     QFrame,
     QHBoxLayout,
     QLabel,
     QMainWindow,
     QPushButton,
     QSizePolicy,
-    QSplitter,
     QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from sensor_host.presentation.vibration_view import VibrationView
+from sensor_host.presentation.controls import IntegratedComboBox
 from sensor_host.presentation.orientation_view import AttitudeView, OrientationView
 from sensor_host.presentation.console_view import ConsoleView
 from sensor_host.presentation.diagnostics_view import DiagnosticsView
@@ -28,11 +27,43 @@ from sensor_host.presentation.connection_view import (
     WifiConnectionPanel,
 )
 from sensor_host.acquisition import AcquisitionHealth, NodeSummary, UiSnapshot
+from sensor_host.presentation.splitter import CapsuleSplitter
 
 
 _DEFAULT_WINDOW_WIDTH = 1440
 _DEFAULT_WINDOW_HEIGHT = 900
-def _card(title: str) -> tuple[QFrame, QVBoxLayout]:
+_CARD_TITLE_ACCENT_WIDTH = 3
+_CARD_TITLE_ACCENT_HEIGHT = 20
+_COMBO_MINIMUM_WIDTH = 72
+_TAB_BAR_HEIGHT = 38
+
+
+def _card_header(title: str, actions: QWidget | None = None) -> QFrame:
+    header = QFrame()
+    header.setProperty("role", "card-header")
+    layout = QHBoxLayout(header)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(SPACE.compact)
+
+    accent = QFrame()
+    accent.setProperty("role", "title-accent")
+    accent.setFixedSize(_CARD_TITLE_ACCENT_WIDTH, _CARD_TITLE_ACCENT_HEIGHT)
+    layout.addWidget(accent)
+
+    heading = QLabel(title)
+    heading.setProperty("role", "card-title")
+    layout.addWidget(heading)
+    layout.addStretch(1)
+    if actions is not None:
+        layout.addWidget(actions, alignment=Qt.AlignmentFlag.AlignVCenter)
+
+    return header
+
+
+def _card(
+    title: str,
+    actions: QWidget | None = None,
+) -> tuple[QFrame, QVBoxLayout]:
     frame = QFrame()
     frame.setProperty("card", True)
     layout = QVBoxLayout(frame)
@@ -43,10 +74,16 @@ def _card(title: str) -> tuple[QFrame, QVBoxLayout]:
         SPACE.section,
     )
     layout.setSpacing(SPACE.section)
-    heading = QLabel(title)
-    heading.setProperty("role", "eyebrow")
-    layout.addWidget(heading)
+    header = _card_header(title, actions)
+    layout.addWidget(header)
     return frame, layout
+
+
+def _toolbar_divider() -> QFrame:
+    divider = QFrame()
+    divider.setProperty("role", "toolbar-divider")
+    divider.setFixedSize(1, 22)
+    return divider
 
 
 class MainWindow(QMainWindow):
@@ -77,9 +114,11 @@ class MainWindow(QMainWindow):
         root_layout.setSpacing(SPACE.normal)
         self.setCentralWidget(central_widget)
 
-        root_layout.addWidget(self._create_header())
+        self.app_header = self._create_header()
+        root_layout.addWidget(self.app_header)
         root_layout.addWidget(self._create_acquisition_toolbar())
         self.tabs = QTabWidget()
+        self.tabs.tabBar().setFixedHeight(_TAB_BAR_HEIGHT)
         self.live_tab = self._create_live_tab()
         self.diagnostics_view = DiagnosticsView()
         self.diagnostics_tab = self._wrap_tab(self.diagnostics_view)
@@ -96,7 +135,7 @@ class MainWindow(QMainWindow):
         left_layout.setSpacing(SPACE.normal)
         left_layout.addWidget(self.wifi_panel)
         left_layout.addWidget(self.node_sidebar, stretch=1)
-        self.workspace_splitter = QSplitter()
+        self.workspace_splitter = CapsuleSplitter()
         self.workspace_splitter.addWidget(left_panel)
         self.workspace_splitter.addWidget(self.tabs)
         self.workspace_splitter.setStretchFactor(0, 1)
@@ -206,14 +245,15 @@ class MainWindow(QMainWindow):
         layout = QHBoxLayout(header)
         layout.setContentsMargins(0, SPACE.tight, 0, SPACE.tight)
         layout.setSpacing(SPACE.compact)
+        layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
         brand = QLabel("STM32 SENSOR DESKTOP")
         brand.setProperty("role", "eyebrow")
         layout.addWidget(brand)
         layout.addStretch(1)
-        self.transport_mode_combo = QComboBox()
+        self.transport_mode_combo = IntegratedComboBox()
         self.transport_mode_combo.addItems(("CDC", "WI-FI"))
         layout.addWidget(self.transport_mode_combo)
-        self.device_combo = QComboBox()
+        self.device_combo = IntegratedComboBox()
         self.device_combo.setMinimumWidth(250)
         self.device_combo.addItem("No CDC devices", "")
         layout.addWidget(self.device_combo)
@@ -232,7 +272,9 @@ class MainWindow(QMainWindow):
 
     def _create_acquisition_toolbar(self) -> QFrame:
         toolbar = QFrame()
+        self.acquisition_toolbar = toolbar
         toolbar.setProperty("card", True)
+        toolbar.setMinimumHeight(50)
         layout = QHBoxLayout(toolbar)
         layout.setContentsMargins(
             SPACE.section,
@@ -241,24 +283,34 @@ class MainWindow(QMainWindow):
             SPACE.compact,
         )
         layout.setSpacing(SPACE.compact)
+        layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
         sensor_label = QLabel("IIS3DWB")
         sensor_label.setProperty("role", "eyebrow")
-        layout.addWidget(sensor_label)
         rate_label = QLabel("26.667 kHz")
         rate_label.setProperty("role", "muted")
+        layout.addWidget(sensor_label)
         layout.addWidget(rate_label)
-        layout.addSpacing(SPACE.section)
-        layout.addWidget(QLabel("WINDOW"))
-        self.window_combo = QComboBox()
+        layout.addWidget(_toolbar_divider())
+
+        window_label = QLabel("WINDOW")
+        window_label.setProperty("role", "control-label")
+        self.window_combo = IntegratedComboBox()
+        self.window_combo.setMinimumWidth(_COMBO_MINIMUM_WIDTH)
         for seconds in (1, 5, 10, 30):
             self.window_combo.addItem(f"{seconds} s", float(seconds))
         self.window_combo.setCurrentText("10 s")
+        layout.addWidget(window_label)
         layout.addWidget(self.window_combo)
-        layout.addWidget(QLabel("FIFO WM"))
-        self.watermark_combo = QComboBox()
+        layout.addWidget(_toolbar_divider())
+
+        watermark_label = QLabel("FIFO WM")
+        watermark_label.setProperty("role", "control-label")
+        self.watermark_combo = IntegratedComboBox()
+        self.watermark_combo.setMinimumWidth(_COMBO_MINIMUM_WIDTH)
         for watermark in (128, 256, 511):
             self.watermark_combo.addItem(str(watermark), watermark)
         self.watermark_combo.setCurrentText("256")
+        layout.addWidget(watermark_label)
         layout.addWidget(self.watermark_combo)
         layout.addStretch(1)
         self.pause_button = QPushButton("Ⅱ PAUSE")
@@ -272,26 +324,26 @@ class MainWindow(QMainWindow):
     def _create_live_tab(self) -> QWidget:
         tab = QWidget()
         layout = QVBoxLayout(tab)
-        layout.setContentsMargins(0, SPACE.section, 0, 0)
+        layout.setContentsMargins(0, SPACE.compact, 0, 0)
         layout.setSpacing(SPACE.normal)
 
-        self.main_splitter = QSplitter()
-        vibration_card, self.vibration_container_layout = _card(
-            "3-AXIS VIBRATION · g"
-        )
+        self.main_splitter = CapsuleSplitter()
         self.vibration_view = VibrationView()
+        vibration_card, self.vibration_container_layout = _card(
+            "3-Axis Vibration",
+            self.vibration_view.header_actions,
+        )
         self.vibration_container_layout.addWidget(self.vibration_view, stretch=1)
         self.main_splitter.addWidget(vibration_card)
 
-        self.right_splitter = QSplitter()
-        self.right_splitter.setOrientation(Qt.Orientation.Vertical)
+        self.right_splitter = CapsuleSplitter(Qt.Orientation.Vertical)
         orientation_card, self.orientation_container_layout = _card(
-            "JY61PL ORIENTATION"
+            "JY61PL Orientation"
         )
         self.orientation_view = OrientationView()
         self.orientation_container_layout.addWidget(self.orientation_view, stretch=1)
         attitude_card, self.attitude_container_layout = _card(
-            "ATTITUDE & ACCELERATION"
+            "Attitude & Acceleration"
         )
         self.attitude_view = AttitudeView()
         self.attitude_container_layout.addWidget(self.attitude_view, stretch=1)
@@ -306,7 +358,7 @@ class MainWindow(QMainWindow):
         self.main_splitter.setSizes([1000, 420])
         layout.addWidget(self.main_splitter, stretch=1)
 
-        health_card, self.health_container_layout = _card("STREAM HEALTH")
+        health_card, self.health_container_layout = _card("Stream Health")
         health_card.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Fixed,
