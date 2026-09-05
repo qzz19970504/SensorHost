@@ -13,7 +13,7 @@ from sensor_host.tools.realtime_archive_models import (
     UartExportAcceptance,
     sequence_lag,
 )
-from host.tools.realtime_archive_acceptance import (
+from tools.realtime_archive_acceptance import (
     AcceptanceSession,
     PortReader,
     _parse_state,
@@ -369,8 +369,8 @@ def test_uart_reader_thread_continuously_drains_without_changing_parse(tmp_path)
     golden stream through that thread in uneven OS-like bursts must yield exactly
     the same parse result as an in-order feed (no host-side byte loss / spurious
     CRC), proving the reader thread does not alter parsing."""
-    repository_root = Path(__file__).resolve().parents[2]
-    stream = (repository_root / "test" / "golden"
+    repository_root = Path(__file__).resolve().parents[1]
+    stream = (repository_root / "tests" / "golden"
               / "stream_v1_frames.bin").read_bytes()
     chunks = [stream[i:i + 7] for i in range(0, len(stream), 7)]
     raw_path = tmp_path / "uart.sdf1"

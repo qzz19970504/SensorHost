@@ -10,10 +10,10 @@ from pathlib import Path
 
 import pytest
 
-HOST_SOURCE = Path(__file__).resolve().parents[1] / "host" / "src"
+HOST_SOURCE = Path(__file__).resolve().parents[1] / "src"
 sys.path.insert(0, str(HOST_SOURCE))
 
-from protocol import (
+from sensor_host.protocol.sdf1 import (
     HEADER_SIZE,
     DATA_HEADER_SIZE,
     MAX_PAYLOAD_SIZE,

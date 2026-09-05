@@ -20,6 +20,7 @@ from sensor_host.acquisition import (
     TransportKind,
 )
 from sensor_host.storage import RawSessionRecorder
+from sensor_host.storage.paths import data_root
 from sensor_host.transport import (
     AcceptedGatewayClient,
     GatewayListener,
@@ -605,7 +606,7 @@ class AppController(QObject):
         export_number = self._export_counts.get(identity, 0) + 1
         self._export_counts[identity] = export_number
         path = (
-            Path("host")
+            data_root()
             / "exports"
             / stamp
             / self._safe_node_directory(summary)
@@ -695,7 +696,7 @@ class AppController(QObject):
 
     @classmethod
     def _default_recording_batch_path(cls) -> Path:
-        return Path("host") / "recordings" / cls._utc_stamp()
+        return data_root() / "recordings" / cls._utc_stamp()
 
     @staticmethod
     def _utc_stamp() -> str:

@@ -5,8 +5,8 @@ from sensor_host.protocol import MessageType, StreamParser
 
 
 def test_shared_golden_stream_decodes_in_one_byte_chunks() -> None:
-    repository_root = Path(__file__).resolve().parents[2]
-    stream = (repository_root / "test" / "golden" / "stream_v1_frames.bin").read_bytes()
+    repository_root = Path(__file__).resolve().parents[1]
+    stream = (repository_root / "tests" / "golden" / "stream_v1_frames.bin").read_bytes()
     parser = StreamParser()
     frames = []
 

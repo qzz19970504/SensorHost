@@ -4,7 +4,7 @@ from pathlib import Path
 from sensor_host.app import main
 from sensor_host.packaging import artifact_name, main as packaging_main, write_manifest
 
-REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_artifact_name_uses_project_version_and_platform() -> None:
@@ -42,7 +42,7 @@ def test_application_smoke_mode_constructs_window_without_event_loop(
 
 
 def test_pyinstaller_recipe_is_windowed_onefile() -> None:
-    recipe = (REPOSITORY_ROOT / "host" / "STM32SensorHost.spec").read_text(
+    recipe = (REPOSITORY_ROOT / "STM32SensorHost.spec").read_text(
         encoding="utf-8"
     )
 
@@ -52,7 +52,7 @@ def test_pyinstaller_recipe_is_windowed_onefile() -> None:
 
 
 def test_pyinstaller_recipe_excludes_foreign_system_icu() -> None:
-    recipe = (REPOSITORY_ROOT / "host" / "STM32SensorHost.spec").read_text(
+    recipe = (REPOSITORY_ROOT / "STM32SensorHost.spec").read_text(
         encoding="utf-8"
     )
 
@@ -63,7 +63,7 @@ def test_pyinstaller_recipe_excludes_foreign_system_icu() -> None:
 
 def test_build_dependency_is_pinned() -> None:
     requirements = (
-        REPOSITORY_ROOT / "host" / "requirements-build.txt"
+        REPOSITORY_ROOT / "requirements-build.txt"
     ).read_text(encoding="utf-8")
 
     assert requirements.strip() == "pyinstaller==6.16.0"
@@ -74,7 +74,7 @@ def test_build_script_runs_tests_smoke_and_manifest() -> None:
         encoding="utf-8"
     )
 
-    assert "test_protocol.py" in script
+    assert "(Join-Path $HostRoot 'tests') -q" in script
     assert "--smoke-test" in script
     assert "sensor_host.packaging" in script
 
