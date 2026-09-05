@@ -824,3 +824,27 @@ def test_attitude_reflows_by_own_width(qtbot, qapp) -> None:
         assert wide_cols == 1
     finally:
         qapp.setStyleSheet(original)
+
+
+def test_keyboard_can_activate_core_controls_and_console_enter(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.set_connected(True)
+    window.set_nodes([online_node()])
+    window.show()
+    qtbot.wait(20)
+
+    window.start_button.setFocus()
+    assert window.start_button.hasFocus()
+    with qtbot.waitSignal(window.start_requested):
+        qtbot.keyClick(window.start_button, Qt.Key.Key_Space)
+
+    qtbot.keyClick(window.start_button, Qt.Key.Key_Tab)
+    assert window.focusWidget() is not window.start_button
+
+    window.tabs.setCurrentWidget(window.console_tab)
+    window.console_view.command_input.setFocus()
+    with qtbot.waitSignal(window.console_view.command_submitted) as signal:
+        qtbot.keyClicks(window.console_view.command_input, "AT+STATE?")
+        qtbot.keyClick(window.console_view.command_input, Qt.Key.Key_Return)
+    assert signal.args == ["AT+STATE?"]
