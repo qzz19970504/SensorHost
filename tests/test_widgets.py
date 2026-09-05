@@ -704,3 +704,34 @@ def test_reset_layout_restores_default_splitter_sizes(qtbot) -> None:
 
     assert window.workspace_splitter.sizes() == expected_workspace
     assert window.main_splitter.sizes() == expected_main
+
+
+def test_vibration_reset_view_restores_full_time_range(qtbot) -> None:
+    view = VibrationView()
+    qtbot.addWidget(view)
+    view.update_snapshot(make_snapshot([-5.0, 0.0], [1, 2], [3, 4], [5, 6]))
+    view_box = view.plot.getViewBox()
+    view.plot.setXRange(-1.0, -0.5, padding=0)
+    assert not view_box.state["autoRange"][0]
+
+    view.reset_view_button.click()
+
+    # Reset re-enables following the latest samples on both axes.
+    assert view_box.state["autoRange"][0]
+    assert view_box.state["autoRange"][1]
+    assert view.auto_y_button.isChecked()
+
+
+def test_console_supports_timestamps_follow_and_clear(qtbot) -> None:
+    console = ConsoleView(max_blocks=100)
+    qtbot.addWidget(console)
+
+    console.append_local("hello")
+    first_line = console.transcript.toPlainText().splitlines()[0]
+    assert "[LOCAL] hello" in first_line
+    assert first_line.count("]") >= 2  # [HH:MM:SS] [LOCAL]
+
+    console.append_local("more")
+    console.clear_display_button.click()
+    assert console.transcript.toPlainText() == ""
+    assert console.follow_checkbox.isChecked()

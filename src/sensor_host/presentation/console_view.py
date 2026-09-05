@@ -2,9 +2,19 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtGui import QColor, QTextCharFormat
-from PyQt6.QtWidgets import QHBoxLayout, QLineEdit, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import (
+    QCheckBox,
+    QHBoxLayout,
+    QLineEdit,
+    QPlainTextEdit,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from sensor_host.presentation.theme import COLORS
 from sensor_host.presentation.spacing import SPACE
@@ -27,6 +37,19 @@ class ConsoleView(QWidget):
         self.transcript.setReadOnly(True)
         self.transcript.document().setMaximumBlockCount(max_blocks)
         self.transcript.setPlaceholderText("Firmware CLI responses appear here")
+        controls = QHBoxLayout()
+        controls.setSpacing(SPACE.compact)
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("Search transcript")
+        self.search_edit.returnPressed.connect(self._find_next)
+        controls.addWidget(self.search_edit, stretch=1)
+        self.follow_checkbox = QCheckBox("FOLLOW")
+        self.follow_checkbox.setChecked(True)
+        controls.addWidget(self.follow_checkbox)
+        self.clear_display_button = QPushButton("CLEAR DISPLAY")
+        self.clear_display_button.clicked.connect(self.transcript.clear)
+        controls.addWidget(self.clear_display_button)
+        layout.addLayout(controls)
         layout.addWidget(self.transcript, stretch=1)
         input_row = QHBoxLayout()
         input_row.setSpacing(SPACE.compact)
@@ -59,8 +82,18 @@ class ConsoleView(QWidget):
         self.command_submitted.emit(command)
 
     def _append(self, category: str, message: str, color: str) -> None:
+        stamp = datetime.now().strftime("%H:%M:%S")
+        scrollbar = self.transcript.verticalScrollBar()
+        previous = scrollbar.value()
         character_format = QTextCharFormat()
         character_format.setForeground(QColor(color))
         self.transcript.setCurrentCharFormat(character_format)
-        self.transcript.appendPlainText(f"[{category}] {message}")
+        self.transcript.appendPlainText(f"[{stamp}] [{category}] {message}")
+        if not self.follow_checkbox.isChecked():
+            scrollbar.setValue(previous)
         self.message_appended.emit(message)
+
+    def _find_next(self) -> None:
+        text = self.search_edit.text()
+        if text:
+            self.transcript.find(text)

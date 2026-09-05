@@ -50,6 +50,9 @@ class VibrationView(QWidget):
         self.auto_y_button.setCheckable(True)
         self.auto_y_button.setChecked(True)
         controls.addWidget(self.auto_y_button)
+        self.reset_view_button = QPushButton("RESET VIEW")
+        self.reset_view_button.clicked.connect(self._reset_view)
+        controls.addWidget(self.reset_view_button)
         self.paused_badge = QLabel("")
         self.paused_badge.setProperty("role", "muted")
         self.paused_badge.hide()
@@ -114,3 +117,9 @@ class VibrationView(QWidget):
 
     def _set_auto_y(self, is_enabled: bool) -> None:
         self.plot.enableAutoRange(axis="y", enable=is_enabled)
+
+    def _reset_view(self) -> None:
+        """Return to following the latest samples after manual pan/zoom (UI-16)."""
+        self.auto_y_button.setChecked(True)
+        self.plot.enableAutoRange(axis="x")
+        self.plot.enableAutoRange(axis="y")
