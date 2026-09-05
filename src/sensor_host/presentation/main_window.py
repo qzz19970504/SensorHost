@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QSignalBlocker, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -94,6 +94,9 @@ class MainWindow(QMainWindow):
     pause_toggled = pyqtSignal(bool)
     record_toggled = pyqtSignal(bool)
     watermark_requested = pyqtSignal(int)
+    start_requested = pyqtSignal()
+    stop_requested = pyqtSignal()
+    livestream_requested = pyqtSignal(str)
     refresh_requested = pyqtSignal()
     wifi_start_requested = pyqtSignal(object)
 
@@ -147,6 +150,11 @@ class MainWindow(QMainWindow):
         self.disconnect_button.clicked.connect(self.disconnect_requested)
         self.pause_button.toggled.connect(self.pause_toggled)
         self.record_button.toggled.connect(self.record_toggled)
+        self.start_button.clicked.connect(self.start_requested)
+        self.stop_button.clicked.connect(self.stop_requested)
+        self.live_target_combo.currentTextChanged.connect(
+            self.livestream_requested
+        )
         self.watermark_combo.currentIndexChanged.connect(
             self._emit_watermark_requested
         )
@@ -166,6 +174,9 @@ class MainWindow(QMainWindow):
         self.pause_button.setEnabled(is_connected)
         self.record_button.setEnabled(is_connected)
         self.watermark_combo.setEnabled(is_connected)
+        self.live_target_combo.setEnabled(is_connected)
+        self.start_button.setEnabled(is_connected)
+        self.stop_button.setEnabled(is_connected)
         if is_connected:
             self.connection_badge.setText("● CONNECTED")
             self.connection_badge.setProperty("state", "online")
@@ -217,6 +228,15 @@ class MainWindow(QMainWindow):
         if status is not None:
             physical_errors = status.uart_dma_errors if is_wifi else status.cdc_errors
         control_state = snapshot.firmware_control_state
+        if (
+            control_state is not None
+            and control_state.livestream_target in {"UART", "CDC"}
+            and self.live_target_combo.currentText()
+            != control_state.livestream_target
+        ):
+            signal_blocker = QSignalBlocker(self.live_target_combo)
+            self.live_target_combo.setCurrentText(control_state.livestream_target)
+            del signal_blocker
         live_drops = 0
         if control_state is not None:
             live_drops = (control_state.live_drops_iis or 0) + (
@@ -312,6 +332,20 @@ class MainWindow(QMainWindow):
         self.watermark_combo.setCurrentText("256")
         layout.addWidget(watermark_label)
         layout.addWidget(self.watermark_combo)
+        layout.addWidget(_toolbar_divider())
+
+        live_target_label = QLabel("LIVE TARGET")
+        live_target_label.setProperty("role", "control-label")
+        self.live_target_combo = IntegratedComboBox()
+        self.live_target_combo.setMinimumWidth(_COMBO_MINIMUM_WIDTH)
+        self.live_target_combo.addItems(("UART", "CDC"))
+        layout.addWidget(live_target_label)
+        layout.addWidget(self.live_target_combo)
+        self.start_button = QPushButton("START")
+        layout.addWidget(self.start_button)
+        self.stop_button = QPushButton("STOP")
+        self.stop_button.setProperty("role", "danger")
+        layout.addWidget(self.stop_button)
         layout.addStretch(1)
         self.pause_button = QPushButton("Ⅱ PAUSE")
         self.pause_button.setCheckable(True)

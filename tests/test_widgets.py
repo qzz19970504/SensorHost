@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import numpy as np
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QFrame, QLabel
@@ -44,7 +46,67 @@ def test_disconnected_window_disables_stream_controls(qtbot) -> None:
     assert not window.disconnect_button.isEnabled()
     assert not window.pause_button.isEnabled()
     assert not window.record_button.isEnabled()
+    assert not window.live_target_combo.isEnabled()
+    assert not window.start_button.isEnabled()
+    assert not window.stop_button.isEnabled()
     assert window.connection_badge.text() == "DISCONNECTED"
+
+
+def test_connected_window_enables_acquisition_controls(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    window.set_connected(True)
+
+    assert window.live_target_combo.isEnabled()
+    assert window.live_target_combo.currentText() == "UART"
+    assert window.start_button.isEnabled()
+    assert window.stop_button.isEnabled()
+
+
+def test_start_button_emits_start_request(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.set_connected(True)
+
+    with qtbot.waitSignal(window.start_requested):
+        window.start_button.click()
+
+
+def test_stop_button_emits_stop_request(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.set_connected(True)
+
+    with qtbot.waitSignal(window.stop_requested):
+        window.stop_button.click()
+
+
+def test_operator_live_target_change_emits_request(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.set_connected(True)
+
+    with qtbot.waitSignal(window.livestream_requested) as signal:
+        window.live_target_combo.setCurrentText("CDC")
+
+    assert signal.args == ["CDC"]
+
+
+def test_snapshot_live_target_update_does_not_emit_request(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+    requested_targets: list[str] = []
+    window.livestream_requested.connect(requested_targets.append)
+    snapshot = replace(
+        make_snapshot([], [], [], []),
+        firmware_control_state=FirmwareControlState(livestream_target="CDC"),
+    )
+
+    window.update_snapshot(snapshot)
+
+    assert window.live_target_combo.currentText() == "CDC"
+    assert requested_targets == []
 
 
 def test_window_switches_between_cdc_and_wifi_connection_controls(qtbot) -> None:
