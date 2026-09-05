@@ -17,5 +17,7 @@
   → 验收 `passed=False`，属设备/固件侧 IIS 源丢弃，与上位机 UI 无关。
 - 实机 UI 验证：`native-cdc-live.png`（原生 windows，真实 CDC 数据）确认目标摘要、
   节点高亮、无节点门控、未知计数 `—`、Console 未读标记、原生 OpenGL 均正确。
+- 实机 RECORD 验证：点击 RECORD 按钮后按钮显示 `● RECORD · 1`，并写出
+  `segment-001.sdf1`（647,804 B），停止后文件完整；UI 记录链路实机端到端可用。
 - Wi-Fi：当前环境无法测试（无热点/ESP），未验。
 - 仍待原生环境：OS 显示缩放切换/多屏/读屏/高对比度；16 节点负载。
