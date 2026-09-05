@@ -112,6 +112,48 @@ def test_app_controller_requests_status_on_connect(qtbot) -> None:
         controller.disconnect_device()
 
 
+def test_selected_node_receives_start_and_stop_commands(qtbot) -> None:
+    transport = RecordingIdleTransport()
+    controller = AppController(lambda: transport)
+
+    controller.connect_device("FAKE")
+    try:
+        qtbot.waitUntil(lambda: len(transport.commands) >= 3, timeout=1000)
+
+        controller.start_acquisition()
+        controller.stop_acquisition()
+
+        qtbot.waitUntil(lambda: len(transport.commands) >= 5, timeout=1000)
+        assert transport.commands[-2:] == [b"AT+START", b"AT+STOP"]
+    finally:
+        controller.disconnect_device()
+
+
+def test_start_and_stop_require_a_selected_node(qtbot) -> None:
+    controller = AppController(RecordingIdleTransport)
+    errors: list[str] = []
+    controller.error_raised.connect(errors.append)
+
+    controller.start_acquisition()
+    controller.stop_acquisition()
+
+    assert errors == [
+        "select a connected node before starting acquisition",
+        "select a connected node before stopping acquisition",
+    ]
+
+
+def test_start_and_stop_reject_an_unknown_node(qtbot) -> None:
+    controller = AppController(RecordingIdleTransport)
+    errors: list[str] = []
+    controller.error_raised.connect(errors.append)
+
+    controller.start_acquisition_for("missing")
+    controller.stop_acquisition_for("missing")
+
+    assert errors == ["unknown node: missing", "unknown node: missing"]
+
+
 def test_worker_failure_clears_session_and_reports_disconnected(qtbot) -> None:
     controller = AppController(FailingReadTransport)
     connection_states: list[tuple[bool, str]] = []

@@ -379,6 +379,42 @@ class AppController(QObject):
         except (OSError, RuntimeError, ValueError) as error:
             self.error_raised.emit(str(error))
 
+    @pyqtSlot()
+    def start_acquisition(self) -> None:
+        """Start acquisition on the selected connected node."""
+        if self._selected_node_id is None:
+            self.error_raised.emit(
+                "select a connected node before starting acquisition"
+            )
+            return
+        self.start_acquisition_for(self._selected_node_id)
+
+    def start_acquisition_for(self, node_id: str) -> None:
+        """Queue START for an explicit connected node identifier."""
+        session = self._sessions.get(node_id)
+        if session is None:
+            self.error_raised.emit(f"unknown node: {node_id}")
+            return
+        session.acquisition.start_acquisition()
+
+    @pyqtSlot()
+    def stop_acquisition(self) -> None:
+        """Stop acquisition on the selected connected node."""
+        if self._selected_node_id is None:
+            self.error_raised.emit(
+                "select a connected node before stopping acquisition"
+            )
+            return
+        self.stop_acquisition_for(self._selected_node_id)
+
+    def stop_acquisition_for(self, node_id: str) -> None:
+        """Queue STOP for an explicit connected node identifier."""
+        session = self._sessions.get(node_id)
+        if session is None:
+            self.error_raised.emit(f"unknown node: {node_id}")
+            return
+        session.acquisition.stop_acquisition()
+
     @pyqtSlot(int)
     def set_watermark(self, words: int) -> None:
         """Set the watermark only on the selected node."""
