@@ -52,6 +52,8 @@ Set-Location D:\Codes\SensorHost
 - `CONNECT`：打开选中的 CDC 口；该动作只连接并查询设备，不会自动 START、
   STOP 或切换实时输出目标。
 - `DISCONNECT`：关闭当前连接。断开不会自动修改固件的实时目标。
+- 错误横幅：连接/命令/写盘等错误会在工具栏下方以非模态横幅显示（任意页面
+  可见），可点击 `CLEAR` 关闭；原始错误同时保留在 CONSOLE。
 
 采集工具栏：
 
@@ -60,14 +62,30 @@ Set-Location D:\Codes\SensorHost
 - `LIVE TARGET`：选择固件实时数据唯一输出目标，`UART` 或 `CDC`。
 - `START`：发送 `AT+START`，启动采集。
 - `STOP`：发送 `AT+STOP`，停止采集并等待 SD 和实时链路完成收尾。
-- `PAUSE`：只暂停界面刷新，不停止固件采集，也不停止记录。
-- `RECORD`：开始或停止上位机原始 SDF1 文件记录。
+- `PAUSE`：只暂停界面刷新，不停止固件采集，也不停止记录。暂停时振动卡显示
+  `DISPLAY PAUSED` 徽标、姿态区显示 `DISPLAY PAUSED`，提醒当前数值为冻结值。
+- `RECORD`：开始或停止上位机原始 SDF1 文件记录。按钮文字显示当前实际正在
+  记录的会话数（如 `● RECORD · 2`）；写盘失败会在错误横幅与 Console 提示。
+- `RESET VIEW`（振动卡）：手动缩放/平移后恢复跟随最新采样时间窗。
+- `RESET LAYOUT`（顶部）：恢复默认分隔器比例与窗口尺寸。
+
+节点侧栏（所有页面左侧）：
+
+- `DEVICES` 列表显示各节点别名、UUID 后 8 位、对端地址与状态；离线/重连节点
+  仅供查看，不能被选为命令目标，命令只会发往当前高亮的在线节点（`TARGET`
+  行常显当前目标别名与 UUID）。
+- 别名输入框中未保存的草稿在列表刷新时不会丢失；`SAVE ALIAS` 仅在别名为
+  1..64 字符且存在选中节点时可用。
 
 页面：
 
-- `LIVE MONITOR`：IIS3DWB 三轴振动和 JY61PL 姿态数据显示。
-- `DIAGNOSTICS`：解析器、固件、链路和存储计数器。
-- `CONSOLE`：查看固件回复或发送高级 AT 命令。
+- `LIVE MONITOR`：IIS3DWB 三轴振动和 JY61PL 姿态数据显示；姿态区状态为
+  `WAITING`/`LIVE`/`STALE`/`DISPLAY PAUSED`/`OFFLINE`。
+- `DIAGNOSTICS`：解析器、固件、链路和存储计数器；长错误自动换行且可用鼠标
+  选中复制；尚未收到固件状态的计数显示 `—` 而非 0。
+- `CONSOLE`：查看固件回复或发送高级 AT 命令。每条记录带接收时间戳；提供
+  搜索框、`FOLLOW`（关闭后阅读历史不自动滚底）、`ALL NODES`（显示非所选节点
+  回复并标注来源）、`CLEAR DISPLAY`（仅清显示）与可折叠的 `EXPORT HELP` 指引。
 
 ## 3. COM6 冷启动采集步骤
 
@@ -112,6 +130,10 @@ UART，直接选择 CDC 会收到 `ERROR:STATE`。正确顺序如下：
 - CDC 目标正常负载下 `LIVE DROP` 应保持 0。
 
 `PAUSE` 只冻结显示。需要真正停止板端采集时必须点击 `STOP`。
+
+尚未收到固件状态或控制状态时，`SOURCE DROP`、`TRANSPORT DROP`、`LINK ERR`、
+`LIVE DROP` 等显示 `—`（未知）而不是 0；收到状态后才显示实际计数。断开连接后
+姿态区显示 `OFFLINE`，不会把最后一次的姿态当作实时值。
 
 ## 6. 数据记录
 
