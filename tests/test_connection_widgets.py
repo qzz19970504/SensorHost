@@ -1,7 +1,7 @@
 import uuid
 
 import pytest
-from PyQt6.QtCore import QSettings
+from PyQt6.QtCore import QSettings, Qt
 
 from sensor_host.acquisition import ConnectionState, NodeSummary, TransportKind
 from sensor_host.presentation.connection_view import (
@@ -96,3 +96,79 @@ def test_node_sidebar_does_not_select_reconnecting_node(qtbot) -> None:
     )
 
     assert selected == []
+
+
+def test_offline_node_cannot_become_command_target(qtbot) -> None:
+    sidebar = NodeSidebar()
+    qtbot.addWidget(sidebar)
+    offline = NodeSummary(
+        node_id="wifi-a",
+        transport_kind=TransportKind.WIFI,
+        peer="192.168.43.20:5000",
+        connection_state=ConnectionState.RECONNECTING,
+        alias="A",
+    )
+    online = NodeSummary(
+        node_id="wifi-b",
+        transport_kind=TransportKind.WIFI,
+        peer="192.168.43.21:5000",
+        connection_state=ConnectionState.STREAMING,
+        device_uuid=uuid.UUID("00112233-4455-6677-8899-aabbccddeeff"),
+        alias="B",
+    )
+    selected: list[str] = []
+    sidebar.node_selected.connect(selected.append)
+    node_id_role = int(Qt.ItemDataRole.UserRole)
+
+    sidebar.set_nodes([offline, online])
+
+    # The online node stays the visible target even though the offline row sorts
+    # first; before the fix the offline row kept the highlight (target mismatch).
+    assert sidebar.node_list.currentItem().data(node_id_role) == "wifi-b"
+    assert sidebar.selected_node_id == "wifi-b"
+    assert selected == []
+
+    # Clicking the offline row must not move the highlight or the target.
+    sidebar.node_list.setCurrentRow(0)
+    assert sidebar.node_list.currentItem().data(node_id_role) == "wifi-b"
+    assert sidebar.selected_node_id == "wifi-b"
+    assert "wifi-a" not in selected
+
+
+def test_set_selected_node_writes_back_target_without_reemitting(qtbot) -> None:
+    sidebar = NodeSidebar()
+    qtbot.addWidget(sidebar)
+    first = NodeSummary(
+        node_id="wifi-a",
+        transport_kind=TransportKind.WIFI,
+        peer="192.168.43.20:5000",
+        connection_state=ConnectionState.STREAMING,
+        device_uuid=uuid.UUID("550e8400-e29b-41d4-a716-446655440000"),
+        alias="A",
+    )
+    second = NodeSummary(
+        node_id="wifi-b",
+        transport_kind=TransportKind.WIFI,
+        peer="192.168.43.21:5000",
+        connection_state=ConnectionState.STREAMING,
+        device_uuid=uuid.UUID("00112233-4455-6677-8899-aabbccddeeff"),
+        alias="B",
+    )
+    selected: list[str] = []
+    sidebar.node_selected.connect(selected.append)
+    node_id_role = int(Qt.ItemDataRole.UserRole)
+
+    sidebar.set_nodes([first, second])
+    assert sidebar.selected_node_id == "wifi-a"
+    assert selected == []
+
+    sidebar.set_selected_node("wifi-b")
+    assert sidebar.selected_node_id == "wifi-b"
+    assert sidebar.node_list.currentItem().data(node_id_role) == "wifi-b"
+    assert selected == []
+    assert "B" in sidebar.target_label.text()
+
+    sidebar.set_selected_node("")
+    assert sidebar.selected_node_id is None
+    assert sidebar.node_list.currentItem() is None
+    assert sidebar.target_label.text() == "TARGET —"

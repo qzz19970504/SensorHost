@@ -101,6 +101,7 @@ def _run_interactive(application: QApplication) -> int:
     controller.connection_changed.connect(lambda connected, _device: window.set_connected(connected))
     controller.wifi_server_changed.connect(window.set_wifi_server_state)
     controller.nodes_changed.connect(window.set_nodes)
+    controller.selected_node_changed.connect(window.node_sidebar.set_selected_node)
     window.node_sidebar.node_selected.connect(controller.select_node)
     window.node_sidebar.alias_requested.connect(controller.set_alias)
     application.aboutToQuit.connect(controller.disconnect_device)

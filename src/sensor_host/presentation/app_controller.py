@@ -568,9 +568,14 @@ class AppController(QObject):
             self._session_index.mark_offline(node_id, session.failure)
         session.worker.deleteLater()
         session.thread.deleteLater()
-        if self._selected_node_id == node_id:
+        target_replaced = self._selected_node_id == node_id
+        if target_replaced:
             self._selected_node_id = next(iter(self._sessions), None)
         self._emit_nodes()
+        if target_replaced:
+            # Keep the sidebar highlight on the authoritative target after an
+            # automatic fail-over so the visible target never drifts (UI-01).
+            self.selected_node_changed.emit(self._selected_node_id or "")
         if not self._sessions:
             self._timer.stop()
             self._status_timer.stop()

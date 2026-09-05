@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PyQt6.QtCore import QSettings, Qt, pyqtSignal
+from PyQt6.QtCore import QSettings, QSignalBlocker, Qt, pyqtSignal
 from PyQt6.QtNetwork import QAbstractSocket, QNetworkInterface
 from PyQt6.QtWidgets import (
     QComboBox,
@@ -172,6 +172,13 @@ class WifiConnectionPanel(QFrame):
             self.expected_ipv4_edit.setText(self._selected_interface_ipv4())
 
 
+_NODE_ID_ROLE = int(Qt.ItemDataRole.UserRole)
+_ALIAS_ROLE = _NODE_ID_ROLE + 1
+_CONNECTED_ROLE = _NODE_ID_ROLE + 2
+_UUID_ROLE = _NODE_ID_ROLE + 3
+_ONLINE_STATES = {ConnectionState.CONNECTED, ConnectionState.STREAMING}
+
+
 class NodeSidebar(QFrame):
     """Show all logical nodes and select the target used by detail controls."""
 
@@ -181,12 +188,17 @@ class NodeSidebar(QFrame):
     def __init__(self) -> None:
         super().__init__()
         self.setProperty("card", True)
+        self._selected_node_id: str | None = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(SPACE.section, SPACE.section, SPACE.section, SPACE.section)
         layout.setSpacing(SPACE.compact)
         heading = QLabel("DEVICES")
         heading.setProperty("role", "eyebrow")
         layout.addWidget(heading)
+        self.target_label = QLabel("TARGET —")
+        self.target_label.setProperty("role", "muted")
+        self.target_label.setWordWrap(True)
+        layout.addWidget(self.target_label)
         self.node_list = QListWidget()
         self.node_list.currentItemChanged.connect(self._emit_selected_node)
         layout.addWidget(self.node_list, stretch=1)
@@ -197,15 +209,24 @@ class NodeSidebar(QFrame):
         self.save_alias_button.clicked.connect(self._emit_alias_requested)
         layout.addWidget(self.save_alias_button)
 
+    @property
+    def selected_node_id(self) -> str | None:
+        """Return the online node the highlight currently targets."""
+        return self._selected_node_id
+
     def set_nodes(self, nodes: list[NodeSummary]) -> None:
-        """Replace list content while retaining the selected node identifier."""
-        selected_item = self.node_list.currentItem()
-        node_id_role = Qt.ItemDataRole.UserRole
-        alias_role = int(Qt.ItemDataRole.UserRole) + 1
-        connected_role = int(Qt.ItemDataRole.UserRole) + 2
-        selected_node_id = selected_item.data(node_id_role) if selected_item else None
+        """Replace list content while retaining the online command target."""
+        previous_id = self._selected_node_id
+        if previous_id is None:
+            current_item = self.node_list.currentItem()
+            if current_item is not None:
+                previous_id = current_item.data(_NODE_ID_ROLE)
+        # Rebuild silently so a refresh never re-issues a selection command.
+        blocker = QSignalBlocker(self.node_list)
         self.node_list.clear()
-        for node in nodes:
+        first_online_row = -1
+        restore_row = -1
+        for row, node in enumerate(nodes):
             state = node.connection_state.value.upper()
             uuid_suffix = str(node.device_uuid)[-8:] if node.device_uuid else "PENDING"
             recording = " · REC" if node.is_recording else ""
@@ -213,33 +234,73 @@ class NodeSidebar(QFrame):
             self.node_list.addItem(
                 f"{node.alias}\n{uuid_suffix} · {node.peer}\n{state}{recording}{alert}"
             )
-            item = self.node_list.item(self.node_list.count() - 1)
-            item.setData(node_id_role, node.node_id)
-            item.setData(alias_role, node.alias)
-            item.setData(
-                connected_role,
-                node.connection_state
-                in {ConnectionState.CONNECTED, ConnectionState.STREAMING},
-            )
-            if node.node_id == selected_node_id:
-                self.node_list.setCurrentItem(item)
-        if self.node_list.currentItem() is None and self.node_list.count():
-            self.node_list.setCurrentRow(0)
+            item = self.node_list.item(row)
+            item.setData(_NODE_ID_ROLE, node.node_id)
+            item.setData(_ALIAS_ROLE, node.alias)
+            item.setData(_UUID_ROLE, uuid_suffix)
+            is_online = node.connection_state in _ONLINE_STATES
+            item.setData(_CONNECTED_ROLE, is_online)
+            if is_online:
+                if first_online_row < 0:
+                    first_online_row = row
+                if node.node_id == previous_id:
+                    restore_row = row
+            else:
+                # Offline rows stay readable but can never become the command
+                # target, so the highlight always matches the routed node.
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+        self.node_list.setCurrentRow(restore_row if restore_row >= 0 else first_online_row)
+        del blocker
+        self._apply_current_target(emit=False)
+
+    def set_selected_node(self, node_id: str) -> None:
+        """Reflect the controller's authoritative target without re-emitting."""
+        blocker = QSignalBlocker(self.node_list)
+        row = self._row_for_node_id(node_id)
+        self.node_list.setCurrentRow(row if row >= 0 and self._is_row_online(row) else -1)
+        del blocker
+        self._apply_current_target(emit=False)
 
     def _emit_selected_node(self, current: object, _previous: object) -> None:
-        if current is None:
-            self.alias_edit.clear()
+        if current is not None and not current.data(_CONNECTED_ROLE):
+            # Defensive: an offline row must never become the command target.
+            blocker = QSignalBlocker(self.node_list)
+            self.node_list.setCurrentRow(self._row_for_node_id(self._selected_node_id))
+            del blocker
+            self._apply_current_target(emit=False)
             return
-        node_id = str(current.data(Qt.ItemDataRole.UserRole))
-        alias_role = int(Qt.ItemDataRole.UserRole) + 1
-        connected_role = int(Qt.ItemDataRole.UserRole) + 2
-        self.alias_edit.setText(str(current.data(alias_role)))
-        if current.data(connected_role):
-            self.node_selected.emit(node_id)
+        self._apply_current_target(emit=True)
+
+    def _apply_current_target(self, *, emit: bool) -> None:
+        item = self.node_list.currentItem()
+        if item is None or not item.data(_CONNECTED_ROLE):
+            self._selected_node_id = None
+            self.alias_edit.clear()
+            self.target_label.setText("TARGET —")
+            return
+        alias = str(item.data(_ALIAS_ROLE))
+        uuid_suffix = str(item.data(_UUID_ROLE))
+        self._selected_node_id = str(item.data(_NODE_ID_ROLE))
+        self.alias_edit.setText(alias)
+        self.target_label.setText(f"TARGET {alias} · {uuid_suffix}")
+        if emit:
+            self.node_selected.emit(self._selected_node_id)
+
+    def _row_for_node_id(self, node_id: str | None) -> int:
+        if not node_id:
+            return -1
+        for row in range(self.node_list.count()):
+            if self.node_list.item(row).data(_NODE_ID_ROLE) == node_id:
+                return row
+        return -1
+
+    def _is_row_online(self, row: int) -> bool:
+        item = self.node_list.item(row)
+        return bool(item is not None and item.data(_CONNECTED_ROLE))
 
     def _emit_alias_requested(self) -> None:
         item = self.node_list.currentItem()
         if item is not None:
             self.alias_requested.emit(
-                str(item.data(Qt.ItemDataRole.UserRole)), self.alias_edit.text()
+                str(item.data(_NODE_ID_ROLE)), self.alias_edit.text()
             )

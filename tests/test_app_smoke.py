@@ -531,3 +531,51 @@ def test_second_archive_waits_for_its_own_terminal_event(qtbot, tmp_path, monkey
         assert len(list((tmp_path / "host" / "exports").rglob("*.sdf1"))) == 2
     finally:
         controller.disconnect_device()
+
+
+def test_offline_node_does_not_steal_commands_end_to_end(qtbot) -> None:
+    online = RecordingIdleTransport()
+    offline = FailingReadTransport()
+    controller = AppController(RecordingIdleTransport)
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    sensor_host_app._wire_acquisition_controls(window, controller)
+    controller.connection_changed.connect(
+        lambda connected, _device: window.set_connected(connected)
+    )
+    controller.nodes_changed.connect(window.set_nodes)
+    controller.selected_node_changed.connect(window.node_sidebar.set_selected_node)
+    window.node_sidebar.node_selected.connect(controller.select_node)
+
+    controller.accept_gateway_client(
+        AcceptedGatewayClient("wifi-a", "peer-a", offline)  # type: ignore[arg-type]
+    )
+    controller.accept_gateway_client(
+        AcceptedGatewayClient("wifi-b", "peer-b", online)  # type: ignore[arg-type]
+    )
+    try:
+        # wifi-a drops; the target must fall back to online wifi-b and the
+        # sidebar highlight must follow through the same write-back path.
+        qtbot.waitUntil(lambda: controller.selected_node_id == "wifi-b", timeout=2000)
+        qtbot.waitUntil(
+            lambda: window.node_sidebar.selected_node_id == "wifi-b", timeout=1000
+        )
+        qtbot.waitUntil(lambda: len(online.commands) >= 3, timeout=1000)
+
+        # Clicking the offline wifi-a row must not retarget any command.
+        window.node_sidebar.node_list.setCurrentRow(0)
+        assert window.node_sidebar.selected_node_id == "wifi-b"
+        assert controller.selected_node_id == "wifi-b"
+
+        window.start_button.click()
+        window.stop_button.click()
+        controller.send_command("AT+PING")
+        qtbot.waitUntil(lambda: b"AT+PING" in online.commands, timeout=1000)
+
+        assert b"AT+START" in online.commands
+        assert b"AT+STOP" in online.commands
+        assert b"AT+START" not in offline.commands
+        assert b"AT+PING" not in offline.commands
+    finally:
+        controller.disconnect_device()
