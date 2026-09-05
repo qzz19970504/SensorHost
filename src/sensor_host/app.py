@@ -57,6 +57,17 @@ def _create_application(arguments: list[str]) -> QApplication:
     return application
 
 
+def _fit_window_to_available_geometry(window: MainWindow) -> None:
+    """Clamp the initial window size to the usable work area (UI-08)."""
+    screen = QApplication.primaryScreen()
+    if screen is None:
+        return
+    available = screen.availableGeometry()
+    width = min(window.width(), max(available.width(), window.minimumWidth()))
+    height = min(window.height(), max(available.height(), window.minimumHeight()))
+    window.resize(width, height)
+
+
 def _run_smoke_test(application: QApplication) -> int:
     """Construct and render one offscreen window without serial discovery."""
     window = MainWindow()
@@ -109,6 +120,7 @@ def _run_interactive(application: QApplication) -> int:
     application.aboutToQuit.connect(controller.disconnect_device)
     refresh_devices()
     window.wifi_panel.restore_settings(settings)
+    _fit_window_to_available_geometry(window)
     window.show()
     return application.exec()
 

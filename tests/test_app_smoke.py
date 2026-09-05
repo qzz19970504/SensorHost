@@ -545,6 +545,18 @@ def test_second_archive_waits_for_its_own_terminal_event(qtbot, tmp_path, monkey
         controller.disconnect_device()
 
 
+def test_window_minimum_fits_small_workspaces(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    assert window.minimumWidth() <= 960
+    assert window.minimumHeight() <= 540
+
+    sensor_host_app._fit_window_to_available_geometry(window)
+    assert window.width() >= window.minimumWidth()
+    assert window.height() >= window.minimumHeight()
+
+
 def test_offline_node_does_not_steal_commands_end_to_end(qtbot) -> None:
     online = RecordingIdleTransport()
     offline = FailingReadTransport()

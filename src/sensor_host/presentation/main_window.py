@@ -116,7 +116,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("STM32 Sensor Host")
         self.resize(_DEFAULT_WINDOW_WIDTH, _DEFAULT_WINDOW_HEIGHT)
-        self.setMinimumSize(1080, 700)
+        self.setMinimumSize(960, 540)
         self._pending_livestream_target: str | None = None
         self._connected = False
         self._node_available = False
