@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from PyQt6.QtCore import QSettings, QSignalBlocker, Qt, pyqtSignal
 from PyQt6.QtNetwork import QAbstractSocket, QNetworkInterface
 from PyQt6.QtWidgets import (
-    QComboBox,
     QFrame,
     QLabel,
     QLineEdit,
@@ -18,6 +17,7 @@ from PyQt6.QtWidgets import (
 )
 
 from sensor_host.acquisition import ConnectionState, NodeSummary
+from sensor_host.presentation.controls import IntegratedComboBox
 from sensor_host.presentation.spacing import SPACE
 from sensor_host.transport import DEFAULT_TCP_PORT, DEFAULT_UDP_PORT, WifiServerConfig
 
@@ -77,7 +77,7 @@ class WifiConnectionPanel(QFrame):
         heading.setProperty("role", "eyebrow")
         layout.addWidget(heading)
         layout.addWidget(QLabel("PHONE HOTSPOT INTERFACE"))
-        self.interface_combo = QComboBox()
+        self.interface_combo = IntegratedComboBox()
         self.interface_combo.currentIndexChanged.connect(self._copy_selected_ipv4)
         layout.addWidget(self.interface_combo)
         layout.addWidget(QLabel("PC IPv4 PRESET IN ESP FIRMWARE"))

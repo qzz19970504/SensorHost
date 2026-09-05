@@ -13,7 +13,10 @@ from sensor_host.presentation.orientation_view import AttitudeView, OrientationV
 from sensor_host.presentation.spacing import SPACE
 from sensor_host.presentation.theme import dark_stylesheet, load_application_fonts
 from sensor_host.presentation.vibration_view import VibrationView
-from sensor_host.presentation.connection_view import NetworkInterfaceInfo
+from sensor_host.presentation.connection_view import (
+    NetworkInterfaceInfo,
+    WifiConnectionPanel,
+)
 from sensor_host.protocol import FirmwareControlState, ParserStats
 
 
@@ -503,3 +506,51 @@ def test_diagnostics_exposes_latest_structured_firmware_fields(qtbot) -> None:
     assert view.value_labels["livestream_target"].text() == "UART"
     assert view.value_labels["sd_ready"].text() == "True"
     assert view.value_labels["diag_sd_stall_ms"].text() == "12"
+
+
+def test_wifi_interface_combo_uses_integrated_chevron(qtbot) -> None:
+    panel = WifiConnectionPanel()
+    qtbot.addWidget(panel)
+
+    assert isinstance(panel.interface_combo, IntegratedComboBox)
+    assert len(panel.interface_combo.arrow_points()) == 3
+
+
+def test_wifi_spinbox_matches_line_edit_input_height(qtbot, qapp) -> None:
+    original = qapp.styleSheet()
+    load_application_fonts()
+    qapp.setStyleSheet(dark_stylesheet())
+    try:
+        panel = WifiConnectionPanel()
+        qtbot.addWidget(panel)
+        panel.show()
+        qtbot.wait(20)
+
+        spin_height = panel.tcp_port_spin.sizeHint().height()
+        edit_height = panel.expected_ipv4_edit.sizeHint().height()
+        # UI-10: the port spin boxes join the 32px input family and must not
+        # render shorter than the neighbouring line edit (the original defect);
+        # native up/down button chrome may add a couple of pixels on top.
+        assert spin_height >= 32
+        assert 0 <= spin_height - edit_height <= 4
+    finally:
+        qapp.setStyleSheet(original)
+
+
+def test_primary_and_danger_roles_mark_operation_hierarchy(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    assert window.connect_button.property("role") == "primary"
+    assert window.start_button.property("role") == "primary"
+    assert window.stop_button.property("role") == "danger"
+    assert window.disconnect_button.property("role") == "danger"
+
+
+def test_theme_separates_disabled_danger_and_primary_roles() -> None:
+    stylesheet = dark_stylesheet()
+
+    assert 'QPushButton[role="danger"]:disabled' in stylesheet
+    assert 'QPushButton[role="primary"]' in stylesheet
+    assert 'QWidget[role="card-actions"]' in stylesheet
+    assert "QSpinBox" in stylesheet

@@ -56,6 +56,7 @@ def dark_stylesheet() -> str:
         border: 0;
         border-bottom: 1px solid {COLORS['border']};
     }}
+    QWidget[role="card-actions"] {{ background: transparent; }}
     QLabel[role="card-title"] {{
         background: transparent;
         color: {COLORS['text']};
@@ -109,6 +110,8 @@ def dark_stylesheet() -> str:
         background: {COLORS['panel_alt']};
     }}
     QPushButton:hover {{ border-color: {COLORS['cyan']}; }}
+    QPushButton:focus {{ border-color: {COLORS['cyan']}; }}
+    QPushButton:pressed {{ background: {COLORS['border']}; }}
     QPushButton:checked {{
         color: {COLORS['cyan']};
         border-color: {COLORS['cyan']};
@@ -116,21 +119,47 @@ def dark_stylesheet() -> str:
     }}
     QPushButton:disabled {{
         color: {COLORS['muted']};
+        border-color: {COLORS['border']};
         background: {COLORS['panel_alt']};
+    }}
+    QPushButton[role="primary"] {{
+        color: #06121F;
+        border-color: {COLORS['cyan']};
+        background: {COLORS['cyan']};
+        font-weight: 700;
+    }}
+    QPushButton[role="primary"]:disabled {{
+        color: {COLORS['muted']};
+        border-color: {COLORS['border']};
+        background: {COLORS['panel_alt']};
+        font-weight: 400;
     }}
     QPushButton[role="danger"] {{
         color: #FFFFFF;
         border-color: #A23B3B;
         background: #B83C3C;
     }}
-    QComboBox, QLineEdit {{
+    QPushButton[role="danger"]:disabled {{
+        color: {COLORS['muted']};
+        border-color: {COLORS['border']};
+        background: {COLORS['panel_alt']};
+    }}
+    QComboBox, QLineEdit, QSpinBox {{
         min-height: 32px;
         border: 1px solid {COLORS['border']};
         border-radius: 6px;
         padding: 0 8px;
         background: {COLORS['panel_alt']};
     }}
+    QComboBox:focus, QLineEdit:focus, QSpinBox:focus {{
+        border-color: {COLORS['cyan']};
+    }}
+    QComboBox:disabled, QLineEdit:disabled, QSpinBox:disabled {{
+        color: {COLORS['muted']};
+        background: {COLORS['panel']};
+    }}
     QComboBox {{ padding-right: 30px; }}
+    QSpinBox {{ padding-right: 22px; }}
     QComboBox::drop-down {{
         subcontrol-origin: border;
         subcontrol-position: top right;
