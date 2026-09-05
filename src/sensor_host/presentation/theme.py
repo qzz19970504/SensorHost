@@ -195,6 +195,9 @@ def dark_stylesheet() -> str:
         border-color: {COLORS['cyan']};
         background: {COLORS['cyan']};
     }}
+    QScrollArea {{ background: transparent; border: 0; }}
+    QScrollArea > QWidget {{ background: transparent; }}
+    QScrollArea > QWidget > QWidget {{ background: transparent; }}
     QTabWidget::pane {{ border: 0; }}
     QTabBar::tab {{
         color: {COLORS['muted']};

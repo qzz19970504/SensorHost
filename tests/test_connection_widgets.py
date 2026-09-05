@@ -172,3 +172,19 @@ def test_set_selected_node_writes_back_target_without_reemitting(qtbot) -> None:
     assert sidebar.selected_node_id is None
     assert sidebar.node_list.currentItem() is None
     assert sidebar.target_label.text() == "TARGET —"
+
+
+def test_wifi_form_scrolls_when_height_is_constrained(qtbot) -> None:
+    panel = WifiConnectionPanel()
+    qtbot.addWidget(panel)
+    panel.set_network_interfaces(
+        [NetworkInterfaceInfo("Phone Hotspot", "192.168.43.100", "255.255.255.0")]
+    )
+    panel.resize(300, 220)
+    panel.show()
+    qtbot.wait(20)
+
+    # The form is taller than the constrained panel, so every field stays
+    # reachable through the scroll area instead of being clipped.
+    assert panel.form_scroll_area.verticalScrollBar().maximum() > 0
+    assert panel.server_config().tcp_port == 54321

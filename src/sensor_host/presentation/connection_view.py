@@ -12,8 +12,10 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QVBoxLayout,
+    QWidget,
 )
 
 from sensor_host.acquisition import ConnectionState, NodeSummary
@@ -70,7 +72,14 @@ class WifiConnectionPanel(QFrame):
     def __init__(self) -> None:
         super().__init__()
         self.setProperty("card", True)
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        self.form_scroll_area = QScrollArea()
+        self.form_scroll_area.setWidgetResizable(True)
+        self.form_scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        container = QWidget()
+        layout = QVBoxLayout(container)
         layout.setContentsMargins(SPACE.section, SPACE.section, SPACE.section, SPACE.section)
         layout.setSpacing(SPACE.compact)
         heading = QLabel("WI-FI FIELD MODE")
@@ -106,6 +115,9 @@ class WifiConnectionPanel(QFrame):
         guidance.setWordWrap(True)
         guidance.setProperty("role", "muted")
         layout.addWidget(guidance)
+        layout.addStretch(1)
+        self.form_scroll_area.setWidget(container)
+        outer.addWidget(self.form_scroll_area)
 
     def set_network_interfaces(self, interfaces: list[NetworkInterfaceInfo]) -> None:
         """Replace selectable network interfaces while retaining the current IP."""
