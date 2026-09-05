@@ -4,6 +4,8 @@ Independent Windows desktop application for SDF1 vibration and orientation acqui
 Connect one STM32 over USB CDC, or accept up to 16 ESP32 transparent TCP bridges.
 Each node has independent parsing, diagnostics, selected-node commands and recording.
 
+Chinese operator guide: [上位机操作手册](docs/USER_MANUAL_zh-CN.md).
+
 ## Develop
 
 Run from this repository root. Python 3.11 or newer is required.
@@ -40,8 +42,10 @@ PC and ESP devices must share a hotspot permitting client communication; allow
 inbound TCP through Windows Firewall when prompted or configure it manually.
 
 Select a device in DEVICES to view its data and send commands. Automatic commands
-are read-only UUID, STATE and LIVESTREAM queries. START, STOP and live-target
-changes are manual. RECORD starts separate per-node files and includes later arrivals.
+are read-only UUID, STATE and LIVESTREAM queries. Use the toolbar's LIVE TARGET,
+START and STOP controls for manual acquisition: on a cold boot, connect COM6, select
+CDC, then click START. If UART acquisition is already active, click STOP, wait for
+OK/IDLE, select CDC, then click START. RECORD starts separate per-node files and includes later arrivals.
 Reconnects create new segments. Archive exports are saved separately from live data.
 The 30-second plot window does not limit recording duration.
 
