@@ -864,3 +864,26 @@ def test_key_controls_expose_accessible_names(qtbot) -> None:
         window.live_target_combo,
     ):
         assert widget.accessibleName()
+
+
+def test_diagnostics_search_section_jump_and_error_summary(qtbot) -> None:
+    view = DiagnosticsView()
+    qtbot.addWidget(view)
+    view.show()
+    qtbot.wait(20)
+
+    assert view.error_summary.text() == "No active errors"
+    view.update_health(
+        AcquisitionHealth(
+            bytes_received=0,
+            frames_received=0,
+            recording_failure=None,
+            last_error="device disconnected",
+        )
+    )
+    assert "device disconnected" in view.error_summary.text()
+
+    view.section_combo.setCurrentText("FIRMWARE")
+    view.search_edit.setText("crc")
+    qtbot.keyClick(view.search_edit, Qt.Key.Key_Return)
+    assert "device disconnected" in view.error_summary.text()

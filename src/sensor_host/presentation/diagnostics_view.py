@@ -5,7 +5,16 @@ from __future__ import annotations
 from dataclasses import asdict
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QGridLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import (
+    QComboBox,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
+)
 
 from sensor_host.acquisition import AcquisitionHealth, UiSnapshot
 from sensor_host.presentation.spacing import SPACE
@@ -24,7 +33,25 @@ class DiagnosticsView(QWidget):
         super().__init__()
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
-        scroll = QScrollArea()
+        controls = QHBoxLayout()
+        controls.setSpacing(SPACE.compact)
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("Search diagnostics fields")
+        self.search_edit.returnPressed.connect(self._find_next)
+        controls.addWidget(self.search_edit, stretch=1)
+        self.section_combo = QComboBox()
+        self.section_combo.currentTextChanged.connect(self._jump_to_section)
+        controls.addWidget(self.section_combo)
+        root.addLayout(controls)
+        self.error_summary = QLabel("No active errors")
+        self.error_summary.setProperty("role", "muted")
+        self.error_summary.setWordWrap(True)
+        self.error_summary.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        root.addWidget(self.error_summary)
+        self._scroll = QScrollArea()
+        scroll = self._scroll
         scroll.setWidgetResizable(True)
         contents = QWidget()
         self.grid = QGridLayout(contents)
@@ -40,6 +67,9 @@ class DiagnosticsView(QWidget):
         scroll.setWidget(contents)
         root.addWidget(scroll)
         self.value_labels: dict[str, QLabel] = {}
+        self._section_headings: dict[str, QLabel] = {}
+        self._status_parts: list[str] = []
+        self._health_parts: list[str] = []
         self._next_row = 0
         self._add_section(
             "PARSER",
@@ -127,17 +157,57 @@ class DiagnosticsView(QWidget):
 
     def update_snapshot(self, snapshot: UiSnapshot) -> None:
         self._replace_values(asdict(snapshot.parser_stats))
-        if snapshot.firmware_status is not None:
-            self._replace_values(asdict(snapshot.firmware_status))
+        status = snapshot.firmware_status
+        if status is not None:
+            self._replace_values(asdict(status))
+            self._status_parts = [
+                f"{name}={value}"
+                for name in (
+                    "crc_errors",
+                    "source_drops",
+                    "transport_drops",
+                    "fifo_overruns",
+                    "command_errors",
+                )
+                if (value := getattr(status, name, 0))
+            ]
         if snapshot.firmware_control_state is not None:
             control_values = asdict(snapshot.firmware_control_state)
             control_values["acquisition_state_text"] = control_values.pop(
                 "acquisition_state"
             )
             self._replace_values(control_values)
+        self._refresh_error_summary()
 
     def update_health(self, health: AcquisitionHealth) -> None:
         self._replace_values(asdict(health))
+        self._health_parts = []
+        if health.last_error:
+            self._health_parts.append(f"last_error: {health.last_error}")
+        if health.recording_failure:
+            self._health_parts.append(f"recording: {health.recording_failure}")
+        self._refresh_error_summary()
+
+    def _refresh_error_summary(self) -> None:
+        parts = self._status_parts + self._health_parts
+        self.error_summary.setText(
+            "ERRORS: " + ", ".join(parts) if parts else "No active errors"
+        )
+
+    def _find_next(self) -> None:
+        query = self.search_edit.text().strip().lower()
+        if not query:
+            return
+        for field_name, value in self.value_labels.items():
+            label_text = field_name.replace("_", " ").upper()
+            if query in label_text or query in value.text().lower():
+                self._scroll.ensureWidgetVisible(value)
+                return
+
+    def _jump_to_section(self, title: str) -> None:
+        heading = self._section_headings.get(title)
+        if heading is not None:
+            self._scroll.ensureWidgetVisible(heading)
 
     def _add_section(self, title: str, fields: tuple[str, ...]) -> None:
         if self._next_row:
@@ -146,6 +216,8 @@ class DiagnosticsView(QWidget):
         heading = QLabel(title)
         heading.setProperty("role", "eyebrow")
         self.grid.addWidget(heading, self._next_row, 0, 1, 2)
+        self._section_headings[title] = heading
+        self.section_combo.addItem(title)
         self._next_row += 1
         for field_name in fields:
             label_text = field_name.replace("_", " ").upper()
