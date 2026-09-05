@@ -14,6 +14,7 @@ class ConsoleView(QWidget):
     """Display a bounded CLI transcript and submit trimmed commands."""
 
     command_submitted = pyqtSignal(str)
+    message_appended = pyqtSignal(str)
 
     def __init__(self, max_blocks: int = 2_000) -> None:
         super().__init__()
@@ -62,3 +63,4 @@ class ConsoleView(QWidget):
         character_format.setForeground(QColor(color))
         self.transcript.setCurrentCharFormat(character_format)
         self.transcript.appendPlainText(f"[{category}] {message}")
+        self.message_appended.emit(message)

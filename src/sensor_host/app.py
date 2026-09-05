@@ -99,6 +99,7 @@ def _run_interactive(application: QApplication) -> int:
     controller.health_ready.connect(window.update_health)
     controller.cli_response.connect(window.console_view.append_response)
     controller.error_raised.connect(window.console_view.append_error)
+    controller.error_raised.connect(window.show_error)
     controller.connection_changed.connect(lambda connected, _device: window.set_connected(connected))
     controller.wifi_server_changed.connect(window.set_wifi_server_state)
     controller.nodes_changed.connect(window.set_nodes)

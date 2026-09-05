@@ -613,3 +613,34 @@ def test_unknown_health_counters_show_em_dash_not_zero(qtbot) -> None:
     assert window.health_value_labels["live_drops"].text() == "—"
     # Host-side parser statistics always have evidence and keep numeric zeros.
     assert window.health_value_labels["crc_errors"].text() == "0"
+
+
+def test_error_surfaces_outside_console_and_marks_unread(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.wait(20)
+    console_index = window.tabs.indexOf(window.console_tab)
+    assert window.tabs.currentWidget() is window.live_tab
+
+    window.console_view.append_error("device disconnected")
+
+    assert window.tabs.tabText(console_index) == "CONSOLE ●"
+
+    window.tabs.setCurrentWidget(window.console_tab)
+    assert window.tabs.tabText(console_index) == "CONSOLE"
+
+
+def test_error_banner_is_non_modal_and_dismissible(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.wait(20)
+
+    assert not window.error_banner_frame.isVisible()
+    window.show_error("select a connected node")
+    assert window.error_banner_frame.isVisible()
+    assert "select a connected node" in window.error_banner.text()
+
+    window.error_clear_button.click()
+    assert not window.error_banner_frame.isVisible()

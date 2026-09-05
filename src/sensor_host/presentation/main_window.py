@@ -132,6 +132,7 @@ class MainWindow(QMainWindow):
         self.app_header = self._create_header()
         root_layout.addWidget(self.app_header)
         root_layout.addWidget(self._create_acquisition_toolbar())
+        root_layout.addWidget(self._create_error_banner())
         self.tabs = QTabWidget()
         self.tabs.tabBar().setFixedHeight(_TAB_BAR_HEIGHT)
         self.live_tab = self._create_live_tab()
@@ -173,6 +174,8 @@ class MainWindow(QMainWindow):
         self.transport_mode_combo.currentTextChanged.connect(
             self._update_transport_mode
         )
+        self.console_view.message_appended.connect(self._on_console_message)
+        self.tabs.currentChanged.connect(self._on_tab_changed)
         self._update_transport_mode()
         self.set_connected(False)
 
@@ -218,6 +221,19 @@ class MainWindow(QMainWindow):
         ):
             widget.setEnabled(node_ready)
             widget.setToolTip(reason)
+
+    def show_error(self, message: str) -> None:
+        """Surface one non-modal error outside the console tab."""
+        self.error_banner.setText(f"ERROR: {message}")
+        self.error_banner_frame.setVisible(True)
+
+    def _on_console_message(self, _message: str) -> None:
+        if self.tabs.currentWidget() is not self.console_tab:
+            self.tabs.setTabText(self.tabs.indexOf(self.console_tab), "CONSOLE ●")
+
+    def _on_tab_changed(self, _index: int) -> None:
+        if self.tabs.currentWidget() is self.console_tab:
+            self.tabs.setTabText(self.tabs.indexOf(self.console_tab), "CONSOLE")
 
     def set_devices(self, devices: list[tuple[str, str]]) -> None:
         """Replace the selectable CDC device list without opening a port."""
@@ -408,6 +424,23 @@ class MainWindow(QMainWindow):
         self.record_button.setCheckable(True)
         layout.addWidget(self.record_button)
         return toolbar
+
+    def _create_error_banner(self) -> QFrame:
+        frame = QFrame()
+        self.error_banner_frame = frame
+        frame.setProperty("card", True)
+        layout = QHBoxLayout(frame)
+        layout.setContentsMargins(SPACE.compact, SPACE.tight, SPACE.compact, SPACE.tight)
+        layout.setSpacing(SPACE.compact)
+        self.error_banner = QLabel("")
+        self.error_banner.setProperty("role", "muted")
+        self.error_banner.setWordWrap(True)
+        layout.addWidget(self.error_banner, stretch=1)
+        self.error_clear_button = QPushButton("CLEAR")
+        self.error_clear_button.clicked.connect(frame.hide)
+        layout.addWidget(self.error_clear_button)
+        frame.hide()
+        return frame
 
     def _create_live_tab(self) -> QWidget:
         tab = QWidget()
