@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QSignalBlocker, Qt, pyqtSignal
+from PyQt6.QtCore import QSignalBlocker, QTimer, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -36,6 +36,7 @@ _CARD_TITLE_ACCENT_WIDTH = 3
 _CARD_TITLE_ACCENT_HEIGHT = 20
 _COMBO_MINIMUM_WIDTH = 72
 _TAB_BAR_HEIGHT = 38
+_LIVESTREAM_SYNC_GRACE_MS = 500
 
 
 def _card_header(title: str, actions: QWidget | None = None) -> QFrame:
@@ -105,6 +106,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("STM32 Sensor Host")
         self.resize(_DEFAULT_WINDOW_WIDTH, _DEFAULT_WINDOW_HEIGHT)
         self.setMinimumSize(1080, 700)
+        self._pending_livestream_target: str | None = None
 
         central_widget = QWidget()
         root_layout = QVBoxLayout(central_widget)
@@ -153,7 +155,7 @@ class MainWindow(QMainWindow):
         self.start_button.clicked.connect(self.start_requested)
         self.stop_button.clicked.connect(self.stop_requested)
         self.live_target_combo.currentTextChanged.connect(
-            self.livestream_requested
+            self._emit_livestream_requested
         )
         self.watermark_combo.currentIndexChanged.connect(
             self._emit_watermark_requested
@@ -166,6 +168,8 @@ class MainWindow(QMainWindow):
 
     def set_connected(self, is_connected: bool) -> None:
         """Apply one coherent connected or disconnected control state."""
+        if not is_connected:
+            self._pending_livestream_target = None
         self.device_combo.setEnabled(not is_connected)
         self.transport_mode_combo.setEnabled(not is_connected)
         self.wifi_panel.setEnabled(not is_connected)
@@ -228,14 +232,19 @@ class MainWindow(QMainWindow):
         if status is not None:
             physical_errors = status.uart_dma_errors if is_wifi else status.cdc_errors
         control_state = snapshot.firmware_control_state
+        reported_livestream_target = (
+            None if control_state is None else control_state.livestream_target
+        )
+        if reported_livestream_target == self._pending_livestream_target:
+            self._pending_livestream_target = None
         if (
-            control_state is not None
-            and control_state.livestream_target in {"UART", "CDC"}
+            self._pending_livestream_target is None
+            and reported_livestream_target in {"UART", "CDC"}
             and self.live_target_combo.currentText()
-            != control_state.livestream_target
+            != reported_livestream_target
         ):
             signal_blocker = QSignalBlocker(self.live_target_combo)
-            self.live_target_combo.setCurrentText(control_state.livestream_target)
+            self.live_target_combo.setCurrentText(reported_livestream_target)
             del signal_blocker
         live_drops = 0
         if control_state is not None:
@@ -474,6 +483,20 @@ class MainWindow(QMainWindow):
         watermark = self.watermark_combo.currentData()
         if watermark is not None:
             self.watermark_requested.emit(int(watermark))
+
+    def _emit_livestream_requested(self, target: str) -> None:
+        self._pending_livestream_target = target
+        QTimer.singleShot(
+            _LIVESTREAM_SYNC_GRACE_MS,
+            lambda requested_target=target: self._finish_livestream_sync_grace(
+                requested_target
+            ),
+        )
+        self.livestream_requested.emit(target)
+
+    def _finish_livestream_sync_grace(self, requested_target: str) -> None:
+        if self._pending_livestream_target == requested_target:
+            self._pending_livestream_target = None
 
     def _update_transport_mode(self) -> None:
         is_wifi = self.transport_mode_combo.currentText() == "WI-FI"

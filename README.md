@@ -45,7 +45,8 @@ Select a device in DEVICES to view its data and send commands. Automatic command
 are read-only UUID, STATE and LIVESTREAM queries. Use the toolbar's LIVE TARGET,
 START and STOP controls for manual acquisition: on a cold boot, connect COM6, select
 CDC, then click START. If UART acquisition is already active, click STOP, wait for
-OK/IDLE, select CDC, then click START. RECORD starts separate per-node files and includes later arrivals.
+OK/IDLE, select CDC, then click START. RECORD starts separate per-node files and
+includes later arrivals.
 Reconnects create new segments. Archive exports are saved separately from live data.
 The 30-second plot window does not limit recording duration.
 

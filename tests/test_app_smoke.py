@@ -172,11 +172,12 @@ def test_acquisition_widgets_are_wired_to_selected_node_commands(qtbot) -> None:
         window.stop_button.click()
         window.live_target_combo.setCurrentText("CDC")
 
-        qtbot.waitUntil(lambda: len(transport.commands) >= 6, timeout=1000)
-        assert transport.commands[-3:] == [
+        qtbot.waitUntil(lambda: len(transport.commands) >= 7, timeout=1000)
+        assert transport.commands[-4:] == [
             b"AT+START",
             b"AT+STOP",
             b"AT+LIVESTREAM=CDC",
+            b"AT+LIVESTREAM?",
         ]
     finally:
         controller.disconnect_device()

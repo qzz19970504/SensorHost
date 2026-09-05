@@ -93,6 +93,21 @@ def test_operator_live_target_change_emits_request(qtbot) -> None:
     assert signal.args == ["CDC"]
 
 
+def test_stale_snapshot_does_not_revert_a_pending_live_target(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.set_connected(True)
+    stale_snapshot = replace(
+        make_snapshot([], [], [], []),
+        firmware_control_state=FirmwareControlState(livestream_target="UART"),
+    )
+
+    window.live_target_combo.setCurrentText("CDC")
+    window.update_snapshot(stale_snapshot)
+
+    assert window.live_target_combo.currentText() == "CDC"
+
+
 def test_snapshot_live_target_update_does_not_emit_request(qtbot) -> None:
     window = MainWindow()
     qtbot.addWidget(window)

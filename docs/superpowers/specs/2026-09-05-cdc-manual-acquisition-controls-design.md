@@ -1,6 +1,6 @@
 # CDC Manual Acquisition Controls Design
 
-**Status:** Approved approach, pending written-spec review  
+**Status:** Complete  
 **Date:** 2026-09-05  
 **Scope:** SensorHost desktop application only
 
@@ -52,6 +52,10 @@ Changing `LIVE TARGET` sends the corresponding live-target command only when a
 node is connected. The selector defaults to `UART`, matching the firmware
 cold-start default. When a structured firmware response reports the actual
 target, the selector is updated without sending a command back to the device.
+After an operator change, the host immediately requests authoritative target
+state and briefly ignores older display snapshots so they cannot visually undo
+an in-flight command. If the firmware rejects the change, normal synchronization
+resumes and restores the reported target.
 
 `CONNECT` remains a read-only connection action. It will not stop acquisition,
 switch away from an ESP32/UART stream, start sensors, or restore a target on

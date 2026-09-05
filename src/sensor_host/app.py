@@ -29,7 +29,18 @@ def _wire_acquisition_controls(
     """Connect acquisition toolbar actions to the selected-node controller."""
     window.start_requested.connect(controller.start_acquisition)
     window.stop_requested.connect(controller.stop_acquisition)
-    window.livestream_requested.connect(controller.set_livestream)
+    window.livestream_requested.connect(
+        lambda target: _set_and_query_livestream(controller, target)
+    )
+
+
+def _set_and_query_livestream(
+    controller: AppController,
+    target: str,
+) -> None:
+    """Set a live target and request authoritative state for GUI synchronization."""
+    controller.set_livestream(target)
+    controller.request_livestream()
 
 
 def _create_application(arguments: list[str]) -> QApplication:
