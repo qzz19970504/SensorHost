@@ -120,6 +120,7 @@ class MainWindow(QMainWindow):
         self._pending_livestream_target: str | None = None
         self._connected = False
         self._node_available = False
+        self._latest_snapshot: UiSnapshot | None = None
 
         central_widget = QWidget()
         root_layout = QVBoxLayout(central_widget)
@@ -237,6 +238,8 @@ class MainWindow(QMainWindow):
     def _on_tab_changed(self, _index: int) -> None:
         if self.tabs.currentWidget() is self.console_tab:
             self.tabs.setTabText(self.tabs.indexOf(self.console_tab), "CONSOLE")
+        if self._latest_snapshot is not None:
+            self.update_snapshot(self._latest_snapshot)
 
     def _reset_layout(self) -> None:
         """Restore default splitter proportions and window size (UI-24)."""
@@ -286,22 +289,8 @@ class MainWindow(QMainWindow):
             self.connection_badge.setText(label)
 
     def update_snapshot(self, snapshot: UiSnapshot) -> None:
-        """Refresh all live views and the fixed stream-integrity summary."""
-        self.vibration_view.update_snapshot(snapshot)
-        self.orientation_view.update_snapshot(snapshot)
-        self.attitude_view.update_snapshot(snapshot)
-        self.diagnostics_view.update_snapshot(snapshot)
-        status = snapshot.firmware_status
-        unknown = "—"
-        source_drops = unknown if status is None else str(status.source_drops)
-        transport_drops = unknown if status is None else str(status.transport_drops)
-        is_wifi = self.transport_mode_combo.currentText() == "WI-FI"
-        if status is None:
-            physical_errors = unknown
-        else:
-            physical_errors = str(
-                status.uart_dma_errors if is_wifi else status.cdc_errors
-            )
+        """Refresh only the visible page, caching the snapshot for tab returns."""
+        self._latest_snapshot = snapshot
         control_state = snapshot.firmware_control_state
         reported_livestream_target = (
             None if control_state is None else control_state.livestream_target
@@ -317,6 +306,30 @@ class MainWindow(QMainWindow):
             signal_blocker = QSignalBlocker(self.live_target_combo)
             self.live_target_combo.setCurrentText(reported_livestream_target)
             del signal_blocker
+        current = self.tabs.currentWidget()
+        if current is self.diagnostics_tab:
+            self.diagnostics_view.update_snapshot(snapshot)
+            return
+        if current is not self.live_tab:
+            return
+        self.vibration_view.update_snapshot(snapshot)
+        self.orientation_view.update_snapshot(snapshot)
+        self.attitude_view.update_snapshot(snapshot)
+        self._update_health_labels(snapshot)
+
+    def _update_health_labels(self, snapshot: UiSnapshot) -> None:
+        status = snapshot.firmware_status
+        unknown = "—"
+        source_drops = unknown if status is None else str(status.source_drops)
+        transport_drops = unknown if status is None else str(status.transport_drops)
+        is_wifi = self.transport_mode_combo.currentText() == "WI-FI"
+        if status is None:
+            physical_errors = unknown
+        else:
+            physical_errors = str(
+                status.uart_dma_errors if is_wifi else status.cdc_errors
+            )
+        control_state = snapshot.firmware_control_state
         if control_state is None:
             live_drops = unknown
         else:
@@ -336,7 +349,8 @@ class MainWindow(QMainWindow):
         }
         for key, value in health_values.items():
             label = self.health_value_labels[key]
-            label.setText(value)
+            if label.text() != value:
+                label.setText(value)
             if key in _ERROR_HEALTH_KEYS and value not in ("0", unknown):
                 label.setToolTip(f"{key} is non-zero; open DIAGNOSTICS for detail")
             else:

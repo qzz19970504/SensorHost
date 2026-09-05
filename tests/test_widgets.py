@@ -632,6 +632,24 @@ def test_error_surfaces_outside_console_and_marks_unread(qtbot) -> None:
     assert window.tabs.tabText(console_index) == "CONSOLE"
 
 
+def test_hidden_diagnostics_page_defers_until_visible(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+    snapshot = replace(
+        make_snapshot([], [], [], []),
+        firmware_control_state=FirmwareControlState(acquisition_state="ACQUIRE"),
+    )
+
+    window.update_snapshot(snapshot)
+    assert window.diagnostics_view.value_labels["acquisition_state_text"].text() == "—"
+
+    window.tabs.setCurrentWidget(window.diagnostics_tab)
+    assert (
+        window.diagnostics_view.value_labels["acquisition_state_text"].text()
+        == "ACQUIRE"
+    )
+
+
 def test_error_banner_is_non_modal_and_dismissible(qtbot) -> None:
     window = MainWindow()
     qtbot.addWidget(window)

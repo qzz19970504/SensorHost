@@ -167,4 +167,6 @@ class DiagnosticsView(QWidget):
         for key, value in values.items():
             label = self.value_labels.get(key)
             if label is not None:
-                label.setText("—" if value is None else str(value))
+                text = "—" if value is None else str(value)
+                if label.text() != text:
+                    label.setText(text)
