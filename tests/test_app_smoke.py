@@ -3,7 +3,9 @@ import struct
 import uuid
 import zlib
 
+from sensor_host import app as sensor_host_app
 from sensor_host.presentation.app_controller import AppController
+from sensor_host.presentation.main_window import MainWindow
 from sensor_host.transport import AcceptedGatewayClient
 from sensor_host.transport import WifiServerConfig
 
@@ -152,6 +154,32 @@ def test_start_and_stop_reject_an_unknown_node(qtbot) -> None:
     controller.stop_acquisition_for("missing")
 
     assert errors == ["unknown node: missing", "unknown node: missing"]
+
+
+def test_acquisition_widgets_are_wired_to_selected_node_commands(qtbot) -> None:
+    transport = RecordingIdleTransport()
+    controller = AppController(lambda: transport)
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    sensor_host_app._wire_acquisition_controls(window, controller)
+    controller.connect_device("FAKE")
+    window.set_connected(True)
+    try:
+        qtbot.waitUntil(lambda: len(transport.commands) >= 3, timeout=1000)
+
+        window.start_button.click()
+        window.stop_button.click()
+        window.live_target_combo.setCurrentText("CDC")
+
+        qtbot.waitUntil(lambda: len(transport.commands) >= 6, timeout=1000)
+        assert transport.commands[-3:] == [
+            b"AT+START",
+            b"AT+STOP",
+            b"AT+LIVESTREAM=CDC",
+        ]
+    finally:
+        controller.disconnect_device()
 
 
 def test_worker_failure_clears_session_and_reports_disconnected(qtbot) -> None:

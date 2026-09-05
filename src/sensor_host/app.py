@@ -22,6 +22,16 @@ SMOKE_TEST_ARGUMENT = "--smoke-test"
 OFFSCREEN_PLATFORM = "offscreen"
 
 
+def _wire_acquisition_controls(
+    window: MainWindow,
+    controller: AppController,
+) -> None:
+    """Connect acquisition toolbar actions to the selected-node controller."""
+    window.start_requested.connect(controller.start_acquisition)
+    window.stop_requested.connect(controller.stop_acquisition)
+    window.livestream_requested.connect(controller.set_livestream)
+
+
 def _create_application(arguments: list[str]) -> QApplication:
     """Create or reuse the process QApplication and apply the host theme."""
     existing_application = QApplication.instance()
@@ -67,6 +77,7 @@ def _run_interactive(application: QApplication) -> int:
     window.pause_toggled.connect(controller.set_display_paused)
     window.record_toggled.connect(controller.set_recording)
     window.watermark_requested.connect(controller.set_watermark)
+    _wire_acquisition_controls(window, controller)
     window.window_combo.currentIndexChanged.connect(
         lambda: controller.set_window_seconds(float(window.window_combo.currentData()))
     )
