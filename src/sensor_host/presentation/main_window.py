@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QSignalBlocker, QTimer, Qt, pyqtSignal
+from PyQt6.QtCore import QSettings, QSignalBlocker, QTimer, Qt, pyqtSignal
+from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -112,8 +113,9 @@ class MainWindow(QMainWindow):
     refresh_requested = pyqtSignal()
     wifi_start_requested = pyqtSignal(object)
 
-    def __init__(self) -> None:
+    def __init__(self, settings: QSettings | None = None) -> None:
         super().__init__()
+        self._settings = settings
         self.setWindowTitle("STM32 Sensor Host")
         self.resize(_DEFAULT_WINDOW_WIDTH, _DEFAULT_WINDOW_HEIGHT)
         self.setMinimumSize(960, 540)
@@ -182,6 +184,8 @@ class MainWindow(QMainWindow):
         self.tabs.currentChanged.connect(self._on_tab_changed)
         self._update_transport_mode()
         self.set_connected(False)
+        self._define_tab_order()
+        self._restore_layout()
 
     def set_connected(self, is_connected: bool) -> None:
         """Apply one coherent connected or disconnected control state."""
@@ -243,10 +247,88 @@ class MainWindow(QMainWindow):
 
     def _reset_layout(self) -> None:
         """Restore default splitter proportions and window size (UI-24)."""
+        if self._settings is not None:
+            self._settings.beginGroup("ui")
+            self._settings.remove("")
+            self._settings.endGroup()
         self.workspace_splitter.setSizes(list(_WORKSPACE_SPLIT_SIZES))
         self.main_splitter.setSizes(list(_MAIN_SPLIT_SIZES))
         self.right_splitter.setSizes(list(_RIGHT_SPLIT_SIZES))
         self.resize(_DEFAULT_WINDOW_WIDTH, _DEFAULT_WINDOW_HEIGHT)
+
+    def _define_tab_order(self) -> None:
+        """Pin a stable keyboard tab order across the primary controls (UI-18)."""
+        chain = (
+            self.transport_mode_combo,
+            self.device_combo,
+            self.connect_button,
+            self.refresh_button,
+            self.disconnect_button,
+            self.reset_layout_button,
+            self.window_combo,
+            self.watermark_combo,
+            self.live_target_combo,
+            self.start_button,
+            self.stop_button,
+            self.pause_button,
+            self.record_button,
+        )
+        for previous, current in zip(chain, chain[1:]):
+            self.setTabOrder(previous, current)
+
+    def save_layout(self) -> None:
+        """Persist window geometry and splitter sizes under ui/* keys (UI-24)."""
+        if self._settings is None:
+            return
+        self._settings.beginGroup("ui")
+        try:
+            self._settings.setValue("window_width", self.width())
+            self._settings.setValue("window_height", self.height())
+            self._settings.setValue(
+                "workspace_sizes", self.workspace_splitter.sizes()
+            )
+            self._settings.setValue("main_sizes", self.main_splitter.sizes())
+            self._settings.setValue("right_sizes", self.right_splitter.sizes())
+        finally:
+            self._settings.endGroup()
+
+    def _restore_layout(self) -> None:
+        """Apply persisted ui/* layout if valid, clamped to the work area."""
+        if self._settings is None:
+            return
+        self._settings.beginGroup("ui")
+        try:
+            width = self._settings.value("window_width", 0, type=int)
+            height = self._settings.value("window_height", 0, type=int)
+            workspace = self._settings.value("workspace_sizes", [], type=list)
+            main = self._settings.value("main_sizes", [], type=list)
+            right = self._settings.value("right_sizes", [], type=list)
+        finally:
+            self._settings.endGroup()
+        screen = self.screen()
+        if width > 0 and height > 0:
+            if screen is not None:
+                available = screen.availableGeometry()
+                width = min(width, available.width())
+                height = min(height, available.height())
+            self.resize(
+                max(width, self.minimumWidth()), max(height, self.minimumHeight())
+            )
+        for splitter, sizes in (
+            (self.workspace_splitter, workspace),
+            (self.main_splitter, main),
+            (self.right_splitter, right),
+        ):
+            try:
+                parsed = [int(value) for value in sizes]
+            except (TypeError, ValueError):
+                parsed = []
+            if len(parsed) == 2 and all(value > 0 for value in parsed):
+                splitter.setSizes(parsed)
+
+    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt API name
+        self.save_layout()
+        super().closeEvent(event)
 
     def set_devices(self, devices: list[tuple[str, str]]) -> None:
         """Replace the selectable CDC device list without opening a port."""

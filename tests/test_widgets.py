@@ -1,7 +1,7 @@
 from dataclasses import replace
 
 import numpy as np
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QSettings, Qt
 from PyQt6.QtWidgets import QFrame, QLabel
 
 from sensor_host.acquisition import (
@@ -887,3 +887,48 @@ def test_diagnostics_search_section_jump_and_error_summary(qtbot) -> None:
     view.search_edit.setText("crc")
     qtbot.keyClick(view.search_edit, Qt.Key.Key_Return)
     assert "device disconnected" in view.error_summary.text()
+
+
+def test_stable_tab_order_across_primary_controls(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.set_connected(True)
+    window.set_nodes([online_node()])
+    window.show()
+    qtbot.wait(20)
+
+    # connect_button is disabled while connected, so start from refresh_button.
+    window.refresh_button.setFocus()
+    qtbot.keyClick(window.refresh_button, Qt.Key.Key_Tab)
+    assert window.focusWidget() is window.disconnect_button
+
+    window.start_button.setFocus()
+    qtbot.keyClick(window.start_button, Qt.Key.Key_Tab)
+    assert window.focusWidget() is window.stop_button
+
+
+def test_layout_persists_and_reset_clears_ui_keys(qtbot, tmp_path) -> None:
+    settings = QSettings(str(tmp_path / "ui.ini"), QSettings.Format.IniFormat)
+    window = MainWindow(settings=settings)
+    qtbot.addWidget(window)
+    window.resize(1200, 800)
+    window.workspace_splitter.setSizes([300, 900])
+    window.save_layout()
+    settings.sync()
+    settings.beginGroup("ui")
+    assert settings.value("window_width", 0, type=int) == 1200
+    settings.endGroup()
+
+    restored = MainWindow(settings=settings)
+    qtbot.addWidget(restored)
+    restored._restore_layout()
+    persisted = restored.workspace_splitter.sizes()
+    restored.workspace_splitter.setSizes([300, 900])
+    # Restoring must reproduce exactly what setting the persisted sizes yields.
+    assert persisted == restored.workspace_splitter.sizes()
+
+    restored._reset_layout()
+    settings.sync()
+    settings.beginGroup("ui")
+    assert settings.childKeys() == []
+    settings.endGroup()

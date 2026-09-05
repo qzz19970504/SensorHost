@@ -79,8 +79,8 @@ def _run_smoke_test(application: QApplication) -> int:
 
 def _run_interactive(application: QApplication) -> int:
     """Wire transports and controllers, then run the interactive event loop."""
-    window = MainWindow()
     settings = QSettings("OpenAI", "STM32SensorHost")
+    window = MainWindow(settings=settings)
     controller = AppController(CdcSerialTransport, settings=settings)
 
     def refresh_devices() -> None:
