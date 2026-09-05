@@ -1,9 +1,9 @@
 # UI 审查执行最终报告（UI_REVIEW_PLAN.md）
 
-- 分支：`ui-review-plan`（基线 `398128e`）；提交数：32；工作树干净。
-- 源门禁：pytest **203 passed**；compileall 0；`--smoke-test` 0；`git diff --check` 0。
-- 发布包：`dist/host/STM32SensorHost-0.1.0-win64.exe`（最终代码重建，64,519,124 B，
-  sha256 `a3c38c4df52e9e15c2c66ddce652bf447869f85a3376aa7e51832d2c5280ef36`），
+- 分支：`ui-review-plan`（基线 `398128e`）；提交数：34；工作树干净。
+- 源门禁：pytest **205 passed**；compileall 0；`--smoke-test` 0；`git diff --check` 0。
+- 发布包：`dist/host/STM32SensorHost-0.1.0-win64.exe`（最终代码重建，64,520,814 B，
+  sha256 `c575b70f31f8ba17fba2eea03c48ab4cd2cec5b693ef33013c4f7b6b7b37fd35`），
   build-venv 门禁与打包 `--smoke-test` 通过。
 - 性能（§7.3）：30 分钟单节点 GUI 回调 count=38388、p50=0.655ms、p95=1.486ms、
   max=5.997ms → p95 ≤ 33ms **PASS**（`stage-3/ui-perf-30min.csv`）。
@@ -29,13 +29,13 @@
 | UI-15 | 3 | ✅ | 测试 | ALL NODES 来源归属 |
 | UI-16 | 3 | ✅ | 测试 + 实机 | RESET VIEW |
 | UI-17 | 3 | ✅ | 测试 + 实机 | 未知显 `—` |
-| UI-18 | 4 | ✅ | 键盘测试 + accessibleName | 读屏/高对比度原生交互未验 |
+| UI-18 | 4 | ✅ | 键盘测试 + accessibleName + 稳定Tab序 | 读屏/高对比度原生交互未验 |
 | UI-19 | 2 | ✅ | 测试 + 原生 | 按卡宽重排 |
 | UI-20 | 0/5 | ✅ | 工具+证据归档 | 截图工具参数化 |
 | UI-21 | 5 | ✅ | 慢传输测量在预算内 | 不重构生命周期 |
 | UI-22 | 3 | ✅ | 测试 + 原生 | 轴前缀/姿态语义说明 |
 | UI-23 | 3 | ✅ | 测试 | EXPORT HELP 折叠指引 |
-| UI-24 | 4 | ✅ | 测试 | RESET LAYOUT |
+| UI-24 | 4 | ✅ | 测试 | RESET LAYOUT + ui/* 布局持久化（校验+clamp+reset清除） |
 
 ## 业务保护清单（第 10 章）结果
 
