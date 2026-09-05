@@ -32,6 +32,9 @@ from sensor_host.presentation.splitter import CapsuleSplitter
 
 _DEFAULT_WINDOW_WIDTH = 1440
 _DEFAULT_WINDOW_HEIGHT = 900
+_WORKSPACE_SPLIT_SIZES = (260, 1180)
+_MAIN_SPLIT_SIZES = (1000, 420)
+_RIGHT_SPLIT_SIZES = (500, 400)
 _CARD_TITLE_ACCENT_WIDTH = 3
 _CARD_TITLE_ACCENT_HEIGHT = 20
 _COMBO_MINIMUM_WIDTH = 72
@@ -156,7 +159,7 @@ class MainWindow(QMainWindow):
         self.workspace_splitter.addWidget(self.tabs)
         self.workspace_splitter.setStretchFactor(0, 1)
         self.workspace_splitter.setStretchFactor(1, 5)
-        self.workspace_splitter.setSizes([260, 1180])
+        self.workspace_splitter.setSizes(list(_WORKSPACE_SPLIT_SIZES))
         root_layout.addWidget(self.workspace_splitter, stretch=1)
 
         self.connect_button.clicked.connect(self._emit_connect_requested)
@@ -234,6 +237,13 @@ class MainWindow(QMainWindow):
     def _on_tab_changed(self, _index: int) -> None:
         if self.tabs.currentWidget() is self.console_tab:
             self.tabs.setTabText(self.tabs.indexOf(self.console_tab), "CONSOLE")
+
+    def _reset_layout(self) -> None:
+        """Restore default splitter proportions and window size (UI-24)."""
+        self.workspace_splitter.setSizes(list(_WORKSPACE_SPLIT_SIZES))
+        self.main_splitter.setSizes(list(_MAIN_SPLIT_SIZES))
+        self.right_splitter.setSizes(list(_RIGHT_SPLIT_SIZES))
+        self.resize(_DEFAULT_WINDOW_WIDTH, _DEFAULT_WINDOW_HEIGHT)
 
     def set_devices(self, devices: list[tuple[str, str]]) -> None:
         """Replace the selectable CDC device list without opening a port."""
@@ -365,6 +375,9 @@ class MainWindow(QMainWindow):
         self.disconnect_button = QPushButton("DISCONNECT")
         self.disconnect_button.setProperty("role", "danger")
         layout.addWidget(self.disconnect_button)
+        self.reset_layout_button = QPushButton("RESET LAYOUT")
+        self.reset_layout_button.clicked.connect(self._reset_layout)
+        layout.addWidget(self.reset_layout_button)
         return header
 
     def _create_acquisition_toolbar(self) -> QFrame:
@@ -480,11 +493,11 @@ class MainWindow(QMainWindow):
         self.right_splitter.addWidget(attitude_card)
         self.right_splitter.setStretchFactor(0, 5)
         self.right_splitter.setStretchFactor(1, 4)
-        self.right_splitter.setSizes([500, 400])
+        self.right_splitter.setSizes(list(_RIGHT_SPLIT_SIZES))
         self.main_splitter.addWidget(self.right_splitter)
         self.main_splitter.setStretchFactor(0, 7)
         self.main_splitter.setStretchFactor(1, 3)
-        self.main_splitter.setSizes([1000, 420])
+        self.main_splitter.setSizes(list(_MAIN_SPLIT_SIZES))
         layout.addWidget(self.main_splitter, stretch=1)
 
         health_card, self.health_container_layout = _card("Stream Health")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QGridLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
 
 from sensor_host.acquisition import AcquisitionHealth, UiSnapshot
@@ -153,6 +154,10 @@ class DiagnosticsView(QWidget):
             label = QLabel(label_text)
             label.setProperty("role", "muted")
             value = QLabel("—")
+            value.setWordWrap(True)
+            value.setTextInteractionFlags(
+                Qt.TextInteractionFlag.TextSelectableByMouse
+            )
             self.grid.addWidget(label, self._next_row, 0)
             self.grid.addWidget(value, self._next_row, 1)
             self.value_labels[field_name] = value

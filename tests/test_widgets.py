@@ -5,6 +5,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QFrame, QLabel
 
 from sensor_host.acquisition import (
+    AcquisitionHealth,
     ConnectionState,
     NodeSummary,
     TransportKind,
@@ -666,3 +667,40 @@ def test_views_explain_units_and_pose_semantics(qtbot) -> None:
     qtbot.addWidget(orientation)
     assert orientation.mode_label.toolTip() == "forced by caller"
     assert "not a position" in orientation.status_label.toolTip()
+
+
+def test_diagnostics_long_values_wrap_and_are_selectable(qtbot) -> None:
+    view = DiagnosticsView()
+    qtbot.addWidget(view)
+    long_error = "e" * 300
+
+    view.update_health(
+        AcquisitionHealth(
+            bytes_received=0,
+            frames_received=0,
+            recording_failure=None,
+            last_error=long_error,
+        )
+    )
+
+    label = view.value_labels["last_error"]
+    assert label.text() == long_error
+    assert label.wordWrap()
+    assert label.textInteractionFlags() & Qt.TextInteractionFlag.TextSelectableByMouse
+
+
+def test_reset_layout_restores_default_splitter_sizes(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.wait(20)
+    expected_workspace = window.workspace_splitter.sizes()
+    expected_main = window.main_splitter.sizes()
+
+    window.workspace_splitter.setSizes([80, 1300])
+    window.main_splitter.setSizes([200, 1200])
+
+    window.reset_layout_button.click()
+
+    assert window.workspace_splitter.sizes() == expected_workspace
+    assert window.main_splitter.sizes() == expected_main
