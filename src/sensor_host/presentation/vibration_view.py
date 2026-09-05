@@ -61,6 +61,9 @@ class VibrationView(QWidget):
         self.plot.showGrid(x=True, y=True, alpha=_GRID_ALPHA)
         self.plot.addLegend(offset=(-8, 8))
         self.plot.setMouseEnabled(x=True, y=True)
+        self.plot.setToolTip(
+            "Left axis auto-scales with an SI prefix (mg, µg); plotted values are raw g."
+        )
         self.x_curve = self._create_curve("X", COLORS["red"])
         self.y_curve = self._create_curve("Y", COLORS["green"])
         self.z_curve = self._create_curve("Z", COLORS["blue"])

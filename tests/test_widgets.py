@@ -655,3 +655,14 @@ def test_record_button_reflects_actual_recording_sessions(qtbot) -> None:
 
     window.set_nodes([replace(online_node(), is_recording=True)])
     assert "1" in window.record_button.text()
+
+
+def test_views_explain_units_and_pose_semantics(qtbot) -> None:
+    vibration = VibrationView()
+    qtbot.addWidget(vibration)
+    assert "SI prefix" in vibration.plot.toolTip()
+
+    orientation = OrientationView(force_fallback=True)
+    qtbot.addWidget(orientation)
+    assert orientation.mode_label.toolTip() == "forced by caller"
+    assert "not a position" in orientation.status_label.toolTip()

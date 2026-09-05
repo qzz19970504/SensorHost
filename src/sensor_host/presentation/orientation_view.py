@@ -191,6 +191,10 @@ class OrientationView(QFrame):
             except (ImportError, RuntimeError) as error:
                 self.fallback_reason = str(error)
                 self._install_fallback(layout)
+        self.mode_label.setToolTip(self.fallback_reason or "OpenGL 3D rendering active")
+        self.status_label.setToolTip(
+            "Orientation pose and world acceleration; not a position estimate."
+        )
 
     def _install_fallback(self, layout: QVBoxLayout) -> None:
         self.using_opengl = False
