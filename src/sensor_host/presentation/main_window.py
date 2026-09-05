@@ -409,6 +409,7 @@ class MainWindow(QMainWindow):
         for seconds in (1, 5, 10, 30):
             self.window_combo.addItem(f"{seconds} s", float(seconds))
         self.window_combo.setCurrentText("10 s")
+        window_label.setBuddy(self.window_combo)
         layout.addWidget(window_label)
         layout.addWidget(self.window_combo)
         layout.addWidget(_toolbar_divider())
@@ -420,6 +421,7 @@ class MainWindow(QMainWindow):
         for watermark in (128, 256, 511):
             self.watermark_combo.addItem(str(watermark), watermark)
         self.watermark_combo.setCurrentText("256")
+        watermark_label.setBuddy(self.watermark_combo)
         layout.addWidget(watermark_label)
         layout.addWidget(self.watermark_combo)
         layout.addWidget(_toolbar_divider())
@@ -429,6 +431,7 @@ class MainWindow(QMainWindow):
         self.live_target_combo = IntegratedComboBox()
         self.live_target_combo.setMinimumWidth(_COMBO_MINIMUM_WIDTH)
         self.live_target_combo.addItems(("UART", "CDC"))
+        live_target_label.setBuddy(self.live_target_combo)
         layout.addWidget(live_target_label)
         layout.addWidget(self.live_target_combo)
         self.start_button = QPushButton("START")

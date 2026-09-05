@@ -9,6 +9,7 @@ from PyQt6.QtGui import QColor, QTextCharFormat
 from PyQt6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QPlainTextEdit,
     QPushButton,
@@ -49,7 +50,20 @@ class ConsoleView(QWidget):
         self.clear_display_button = QPushButton("CLEAR DISPLAY")
         self.clear_display_button.clicked.connect(self.transcript.clear)
         controls.addWidget(self.clear_display_button)
+        self.export_help_button = QPushButton("EXPORT HELP")
+        self.export_help_button.setCheckable(True)
+        controls.addWidget(self.export_help_button)
+        self.export_help_label = QLabel(
+            "Manual archive export: STOP or wait for IDLE, select the node, then send "
+            "AT+EXPORT=CDC or AT+EXPORT=UART and wait for EMPTY/COMPLETE/ABORTED. "
+            "Files are saved under the host data root exports/ directory."
+        )
+        self.export_help_label.setWordWrap(True)
+        self.export_help_label.setProperty("role", "muted")
+        self.export_help_label.hide()
+        self.export_help_button.toggled.connect(self.export_help_label.setVisible)
         layout.addLayout(controls)
+        layout.addWidget(self.export_help_label)
         layout.addWidget(self.transcript, stretch=1)
         input_row = QHBoxLayout()
         input_row.setSpacing(SPACE.compact)

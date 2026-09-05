@@ -735,3 +735,28 @@ def test_console_supports_timestamps_follow_and_clear(qtbot) -> None:
     console.clear_display_button.click()
     assert console.transcript.toPlainText() == ""
     assert console.follow_checkbox.isChecked()
+
+
+def test_form_labels_are_buddied_to_their_controls(qtbot) -> None:
+    panel = WifiConnectionPanel()
+    qtbot.addWidget(panel)
+    panel_buddies = {label.buddy() for label in panel.findChildren(QLabel)}
+    assert panel.interface_combo in panel_buddies
+    assert panel.expected_ipv4_edit in panel_buddies
+    assert panel.tcp_port_spin in panel_buddies
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window_buddies = {label.buddy() for label in window.findChildren(QLabel)}
+    assert window.window_combo in window_buddies
+    assert window.live_target_combo in window_buddies
+
+
+def test_console_export_help_is_collapsible(qtbot) -> None:
+    console = ConsoleView()
+    qtbot.addWidget(console)
+
+    assert console.export_help_label.isHidden()
+    console.export_help_button.click()
+    assert not console.export_help_label.isHidden()
+    assert "AT+EXPORT" in console.export_help_label.text()
