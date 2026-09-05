@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -62,20 +63,61 @@ def _snapshot() -> UiSnapshot:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--page", choices=("live", "diagnostics", "console"), default="live"
+    )
+    parser.add_argument("--mode", choices=("cdc", "wifi"), default="cdc")
+    parser.add_argument("--size", default="1920x1080")
+    parser.add_argument(
+        "--state",
+        choices=("connected", "disconnected", "listening", "paused"),
+        default="connected",
+    )
+    parser.add_argument("--manifest", type=Path, default=None)
     arguments = parser.parse_args()
+    width, height = (int(part) for part in arguments.size.lower().split("x"))
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     application = QApplication.instance() or QApplication(sys.argv)
     load_application_fonts()
     application.setStyleSheet(dark_stylesheet())
     window = MainWindow()
-    window.resize(1920, 1080)
+    window.resize(width, height)
+    window.transport_mode_combo.setCurrentText(
+        "WI-FI" if arguments.mode == "wifi" else "CDC"
+    )
     window.set_devices([("COM7", "COM7 — STM32 Virtual COM Port")])
-    window.set_connected(True)
+    window.set_connected(arguments.state != "disconnected")
+    if arguments.state == "listening":
+        window.set_wifi_server_state(True, "LISTENING 192.168.43.100:54321")
+    if arguments.state == "paused":
+        window.set_display_paused(True)
     window.update_snapshot(_snapshot())
+    tabs = {
+        "live": window.live_tab,
+        "diagnostics": window.diagnostics_tab,
+        "console": window.console_tab,
+    }
+    window.tabs.setCurrentWidget(tabs[arguments.page])
     window.show()
     application.processEvents()
     arguments.output.parent.mkdir(parents=True, exist_ok=True)
     saved = window.grab().save(str(arguments.output), "PNG")
+    if arguments.manifest is not None:
+        arguments.manifest.parent.mkdir(parents=True, exist_ok=True)
+        arguments.manifest.write_text(
+            json.dumps(
+                {
+                    "page": arguments.page,
+                    "mode": arguments.mode,
+                    "size": [width, height],
+                    "state": arguments.state,
+                    "device_pixel_ratio": application.devicePixelRatio(),
+                    "output": arguments.output.name,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
     window.close()
     return 0 if saved else 1
 
