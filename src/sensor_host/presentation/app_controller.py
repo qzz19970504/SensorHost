@@ -112,6 +112,7 @@ class AppController(QObject):
     snapshot_ready = pyqtSignal(object)
     health_ready = pyqtSignal(object)
     cli_response = pyqtSignal(str)
+    cli_response_from = pyqtSignal(str, str)
     connection_changed = pyqtSignal(bool, str)
     nodes_changed = pyqtSignal(object)
     selected_node_changed = pyqtSignal(str)
@@ -506,6 +507,8 @@ class AppController(QObject):
         for session in list(self._sessions.values()):
             self._consume_identity_updates(session)
             responses = session.acquisition.drain_cli_responses()
+            for response in responses:
+                self.cli_response_from.emit(session.node_id, response)
             if session.node_id == self._selected_node_id:
                 for response in responses:
                     self.cli_response.emit(response)

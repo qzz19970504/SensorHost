@@ -47,6 +47,8 @@ class ConsoleView(QWidget):
         self.follow_checkbox = QCheckBox("FOLLOW")
         self.follow_checkbox.setChecked(True)
         controls.addWidget(self.follow_checkbox)
+        self.all_nodes_checkbox = QCheckBox("ALL NODES")
+        controls.addWidget(self.all_nodes_checkbox)
         self.clear_display_button = QPushButton("CLEAR DISPLAY")
         self.clear_display_button.clicked.connect(self.transcript.clear)
         controls.addWidget(self.clear_display_button)
@@ -77,6 +79,19 @@ class ConsoleView(QWidget):
         layout.addLayout(input_row)
         self.send_button.clicked.connect(self._submit)
         self.command_input.returnPressed.connect(self._submit)
+        self.current_node_id: str | None = None
+
+    def set_current_node(self, node_id: str) -> None:
+        """Track the selected node so sourced lines avoid duplicating it."""
+        self.current_node_id = node_id or None
+
+    def append_response_from(self, node_id: str, message: str) -> None:
+        """Show another node's response with its source when ALL NODES is on."""
+        if not self.all_nodes_checkbox.isChecked():
+            return
+        if node_id == self.current_node_id:
+            return
+        self._append(f"RX@{node_id}", message, COLORS["blue"])
 
     def append_local(self, message: str) -> None:
         self._append("LOCAL", message, COLORS["muted"])

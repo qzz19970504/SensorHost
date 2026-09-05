@@ -109,6 +109,8 @@ def _run_interactive(application: QApplication) -> int:
     controller.snapshot_ready.connect(window.update_snapshot)
     controller.health_ready.connect(window.update_health)
     controller.cli_response.connect(window.console_view.append_response)
+    controller.cli_response_from.connect(window.console_view.append_response_from)
+    controller.selected_node_changed.connect(window.console_view.set_current_node)
     controller.error_raised.connect(window.console_view.append_error)
     controller.error_raised.connect(window.show_error)
     controller.connection_changed.connect(lambda connected, _device: window.set_connected(connected))

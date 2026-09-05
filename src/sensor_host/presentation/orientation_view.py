@@ -26,7 +26,7 @@ from sensor_host.presentation.spacing import SPACE
 
 
 _STALE_AFTER_S = 0.5
-_COMPACT_WINDOW_HEIGHT = 800
+_COMPACT_CARD_WIDTH = 280
 _COMPACT_FIELD_SPACING = 2
 _DEVICE_VERTICES = np.asarray(
     [
@@ -320,7 +320,7 @@ class AttitudeView(QFrame):
 
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - Qt API name
         super().resizeEvent(event)
-        is_compact = self.window().height() < _COMPACT_WINDOW_HEIGHT
+        is_compact = self.width() < _COMPACT_CARD_WIDTH
         if is_compact == self._is_compact:
             return
         self._apply_layout(is_compact)

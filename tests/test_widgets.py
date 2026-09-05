@@ -760,3 +760,49 @@ def test_console_export_help_is_collapsible(qtbot) -> None:
     console.export_help_button.click()
     assert not console.export_help_label.isHidden()
     assert "AT+EXPORT" in console.export_help_label.text()
+
+
+def test_console_can_show_other_node_responses_with_source(qtbot) -> None:
+    console = ConsoleView()
+    qtbot.addWidget(console)
+    console.set_current_node("wifi-b")
+    console.all_nodes_checkbox.setChecked(True)
+
+    console.append_response_from("wifi-a", "hello from a")
+    console.append_response_from("wifi-b", "selected dup")
+
+    text = console.transcript.toPlainText()
+    assert "hello from a" in text
+    assert "wifi-a" in text
+    assert "selected dup" not in text
+
+    console.all_nodes_checkbox.setChecked(False)
+    console.append_response_from("wifi-a", "hidden now")
+    assert "hidden now" not in console.transcript.toPlainText()
+
+
+def test_attitude_reflows_by_own_width(qtbot, qapp) -> None:
+    original = qapp.styleSheet()
+    load_application_fonts()
+    qapp.setStyleSheet(dark_stylesheet())
+    try:
+        window = MainWindow()
+        qtbot.addWidget(window)
+        window.resize(1080, 700)
+        window.show()
+        qtbot.wait(20)
+        layout = window.attitude_view.layout()
+        narrow_cols = max(
+            layout.getItemPosition(index)[1] for index in range(layout.count())
+        )
+        assert narrow_cols == 3
+
+        window.resize(1440, 900)
+        qtbot.wait(20)
+        layout = window.attitude_view.layout()
+        wide_cols = max(
+            layout.getItemPosition(index)[1] for index in range(layout.count())
+        )
+        assert wide_cols == 1
+    finally:
+        qapp.setStyleSheet(original)
