@@ -554,3 +554,30 @@ def test_theme_separates_disabled_danger_and_primary_roles() -> None:
     assert 'QPushButton[role="primary"]' in stylesheet
     assert 'QWidget[role="card-actions"]' in stylesheet
     assert "QSpinBox" in stylesheet
+
+
+def test_display_pause_marks_frozen_views(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.set_connected(True)
+    window.show()
+    qtbot.wait(20)
+
+    window.set_display_paused(True)
+
+    assert window.vibration_view.paused_badge.isVisible()
+    assert window.orientation_view.status_label.text() == "DISPLAY PAUSED"
+
+    window.set_display_paused(False)
+    assert not window.vibration_view.paused_badge.isVisible()
+
+
+def test_disconnect_marks_orientation_offline_not_live(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.set_connected(True)
+    window.orientation_view.status_label.setText("LIVE")
+
+    window.set_connected(False)
+
+    assert window.orientation_view.status_label.text() == "OFFLINE"

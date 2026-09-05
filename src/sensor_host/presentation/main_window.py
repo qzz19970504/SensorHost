@@ -189,8 +189,14 @@ class MainWindow(QMainWindow):
             self.connection_badge.setProperty("state", "offline")
             self.pause_button.setChecked(False)
             self.record_button.setChecked(False)
+            self.orientation_view.set_offline()
         self.connection_badge.style().unpolish(self.connection_badge)
         self.connection_badge.style().polish(self.connection_badge)
+
+    def set_display_paused(self, is_paused: bool) -> None:
+        """Mark every display-frozen view so frozen values are not read as live."""
+        self.vibration_view.set_paused(is_paused)
+        self.orientation_view.set_paused(is_paused)
 
     def set_devices(self, devices: list[tuple[str, str]]) -> None:
         """Replace the selectable CDC device list without opening a port."""

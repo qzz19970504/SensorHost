@@ -86,6 +86,7 @@ def _run_interactive(application: QApplication) -> int:
     window.wifi_start_requested.connect(controller.start_wifi_server)
     window.disconnect_requested.connect(controller.disconnect_device)
     window.pause_toggled.connect(controller.set_display_paused)
+    window.pause_toggled.connect(window.set_display_paused)
     window.record_toggled.connect(controller.set_recording)
     window.watermark_requested.connect(controller.set_watermark)
     _wire_acquisition_controls(window, controller)

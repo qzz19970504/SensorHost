@@ -239,6 +239,15 @@ class OrientationView(QFrame):
         acceleration_world = world_acceleration(sample.acceleration_g, sample.angles_deg)
         self._set_pose(sample.angles_deg, acceleration_world, True)
 
+    def set_paused(self, is_paused: bool) -> None:
+        """Flag the frozen display state without implying live pose data."""
+        if is_paused:
+            self.status_label.setText("DISPLAY PAUSED")
+
+    def set_offline(self) -> None:
+        """Mark the pose not live after a disconnect, retaining the last pose."""
+        self.status_label.setText("OFFLINE")
+
     def _set_pose(
         self,
         angles_deg: Sequence[float],
