@@ -4,7 +4,12 @@ import numpy as np
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QFrame, QLabel
 
-from sensor_host.acquisition import UiSnapshot
+from sensor_host.acquisition import (
+    ConnectionState,
+    NodeSummary,
+    TransportKind,
+    UiSnapshot,
+)
 from sensor_host.presentation.controls import IntegratedComboBox
 from sensor_host.presentation.main_window import MainWindow
 from sensor_host.presentation.console_view import ConsoleView
@@ -39,6 +44,16 @@ def make_snapshot(
     )
 
 
+def online_node(node_id: str = "wifi-1") -> NodeSummary:
+    return NodeSummary(
+        node_id=node_id,
+        transport_kind=TransportKind.WIFI,
+        peer="192.168.43.20:5000",
+        connection_state=ConnectionState.STREAMING,
+        alias="North Motor",
+    )
+
+
 def test_disconnected_window_disables_stream_controls(qtbot) -> None:
     window = MainWindow()
     qtbot.addWidget(window)
@@ -60,6 +75,7 @@ def test_connected_window_enables_acquisition_controls(qtbot) -> None:
     qtbot.addWidget(window)
 
     window.set_connected(True)
+    window.set_nodes([online_node()])
 
     assert window.live_target_combo.isEnabled()
     assert window.live_target_combo.currentText() == "UART"
@@ -71,6 +87,7 @@ def test_start_button_emits_start_request(qtbot) -> None:
     window = MainWindow()
     qtbot.addWidget(window)
     window.set_connected(True)
+    window.set_nodes([online_node()])
 
     with qtbot.waitSignal(window.start_requested):
         window.start_button.click()
@@ -80,6 +97,7 @@ def test_stop_button_emits_stop_request(qtbot) -> None:
     window = MainWindow()
     qtbot.addWidget(window)
     window.set_connected(True)
+    window.set_nodes([online_node()])
 
     with qtbot.waitSignal(window.stop_requested):
         window.stop_button.click()

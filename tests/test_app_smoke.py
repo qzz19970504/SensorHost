@@ -4,6 +4,7 @@ import uuid
 import zlib
 
 from sensor_host import app as sensor_host_app
+from sensor_host.acquisition import ConnectionState, NodeSummary, TransportKind
 from sensor_host.presentation.app_controller import AppController
 from sensor_host.presentation.main_window import MainWindow
 from sensor_host.transport import AcceptedGatewayClient
@@ -165,6 +166,17 @@ def test_acquisition_widgets_are_wired_to_selected_node_commands(qtbot) -> None:
     sensor_host_app._wire_acquisition_controls(window, controller)
     controller.connect_device("FAKE")
     window.set_connected(True)
+    window.set_nodes(
+        [
+            NodeSummary(
+                node_id="cdc:FAKE",
+                transport_kind=TransportKind.CDC,
+                peer="FAKE",
+                connection_state=ConnectionState.STREAMING,
+                alias="FAKE",
+            )
+        ]
+    )
     try:
         qtbot.waitUntil(lambda: len(transport.commands) >= 3, timeout=1000)
 

@@ -26,7 +26,7 @@ from sensor_host.presentation.connection_view import (
     NodeSidebar,
     WifiConnectionPanel,
 )
-from sensor_host.acquisition import AcquisitionHealth, NodeSummary, UiSnapshot
+from sensor_host.acquisition import AcquisitionHealth, ConnectionState, NodeSummary, UiSnapshot
 from sensor_host.presentation.splitter import CapsuleSplitter
 
 
@@ -107,6 +107,8 @@ class MainWindow(QMainWindow):
         self.resize(_DEFAULT_WINDOW_WIDTH, _DEFAULT_WINDOW_HEIGHT)
         self.setMinimumSize(1080, 700)
         self._pending_livestream_target: str | None = None
+        self._connected = False
+        self._node_available = False
 
         central_widget = QWidget()
         root_layout = QVBoxLayout(central_widget)
@@ -175,12 +177,7 @@ class MainWindow(QMainWindow):
         self.wifi_panel.setEnabled(not is_connected)
         self.connect_button.setEnabled(not is_connected)
         self.disconnect_button.setEnabled(is_connected)
-        self.pause_button.setEnabled(is_connected)
-        self.record_button.setEnabled(is_connected)
-        self.watermark_combo.setEnabled(is_connected)
-        self.live_target_combo.setEnabled(is_connected)
-        self.start_button.setEnabled(is_connected)
-        self.stop_button.setEnabled(is_connected)
+        self._connected = is_connected
         if is_connected:
             self.connection_badge.setText("● CONNECTED")
             self.connection_badge.setProperty("state", "online")
@@ -192,11 +189,27 @@ class MainWindow(QMainWindow):
             self.orientation_view.set_offline()
         self.connection_badge.style().unpolish(self.connection_badge)
         self.connection_badge.style().polish(self.connection_badge)
+        self._refresh_node_controls()
 
     def set_display_paused(self, is_paused: bool) -> None:
         """Mark every display-frozen view so frozen values are not read as live."""
         self.vibration_view.set_paused(is_paused)
         self.orientation_view.set_paused(is_paused)
+
+    def _refresh_node_controls(self) -> None:
+        """Enable node-scoped actions only when a connected node can receive them."""
+        node_ready = self._connected and self._node_available
+        reason = "" if node_ready else "connect a node before using node commands"
+        for widget in (
+            self.pause_button,
+            self.record_button,
+            self.watermark_combo,
+            self.live_target_combo,
+            self.start_button,
+            self.stop_button,
+        ):
+            widget.setEnabled(node_ready)
+            widget.setToolTip(reason)
 
     def set_devices(self, devices: list[tuple[str, str]]) -> None:
         """Replace the selectable CDC device list without opening a port."""
@@ -217,6 +230,12 @@ class MainWindow(QMainWindow):
     def set_nodes(self, nodes: list[NodeSummary]) -> None:
         """Replace the persistent multi-node sidebar content."""
         self.node_sidebar.set_nodes(nodes)
+        self._node_available = any(
+            node.connection_state
+            in {ConnectionState.CONNECTED, ConnectionState.STREAMING}
+            for node in nodes
+        )
+        self._refresh_node_controls()
 
     def set_wifi_server_state(self, is_running: bool, label: str) -> None:
         """Show listener state even before the first gateway connects."""
