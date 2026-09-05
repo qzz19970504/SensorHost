@@ -848,3 +848,19 @@ def test_keyboard_can_activate_core_controls_and_console_enter(qtbot) -> None:
         qtbot.keyClicks(window.console_view.command_input, "AT+STATE?")
         qtbot.keyClick(window.console_view.command_input, Qt.Key.Key_Return)
     assert signal.args == ["AT+STATE?"]
+
+
+def test_key_controls_expose_accessible_names(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+    for widget in (
+        window.connect_button,
+        window.disconnect_button,
+        window.start_button,
+        window.stop_button,
+        window.pause_button,
+        window.record_button,
+        window.window_combo,
+        window.live_target_combo,
+    ):
+        assert widget.accessibleName()
