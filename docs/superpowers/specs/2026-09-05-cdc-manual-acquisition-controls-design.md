@@ -1,7 +1,7 @@
 # CDC Manual Acquisition Controls Design
 
-**Status:** Complete  
-**Date:** 2026-09-05  
+**Status:** Complete
+**Date:** 2026-09-05
 **Scope:** SensorHost desktop application only
 
 ## Problem statement
