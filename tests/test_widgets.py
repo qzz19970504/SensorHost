@@ -599,3 +599,17 @@ def test_disconnect_marks_orientation_offline_not_live(qtbot) -> None:
     window.set_connected(False)
 
     assert window.orientation_view.status_label.text() == "OFFLINE"
+
+
+def test_unknown_health_counters_show_em_dash_not_zero(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    window.update_snapshot(make_snapshot([], [], [], []))
+
+    assert window.health_value_labels["source_drops"].text() == "—"
+    assert window.health_value_labels["transport_drops"].text() == "—"
+    assert window.health_value_labels["physical_errors"].text() == "—"
+    assert window.health_value_labels["live_drops"].text() == "—"
+    # Host-side parser statistics always have evidence and keep numeric zeros.
+    assert window.health_value_labels["crc_errors"].text() == "0"

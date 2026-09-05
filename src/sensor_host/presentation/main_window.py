@@ -37,6 +37,14 @@ _CARD_TITLE_ACCENT_HEIGHT = 20
 _COMBO_MINIMUM_WIDTH = 72
 _TAB_BAR_HEIGHT = 38
 _LIVESTREAM_SYNC_GRACE_MS = 500
+_ERROR_HEALTH_KEYS = (
+    "crc_errors",
+    "sequence_gaps",
+    "source_drops",
+    "transport_drops",
+    "physical_errors",
+    "live_drops",
+)
 
 
 def _card_header(title: str, actions: QWidget | None = None) -> QFrame:
@@ -250,12 +258,16 @@ class MainWindow(QMainWindow):
         self.attitude_view.update_snapshot(snapshot)
         self.diagnostics_view.update_snapshot(snapshot)
         status = snapshot.firmware_status
-        source_drops = 0 if status is None else status.source_drops
-        transport_drops = 0 if status is None else status.transport_drops
+        unknown = "—"
+        source_drops = unknown if status is None else str(status.source_drops)
+        transport_drops = unknown if status is None else str(status.transport_drops)
         is_wifi = self.transport_mode_combo.currentText() == "WI-FI"
-        physical_errors = 0
-        if status is not None:
-            physical_errors = status.uart_dma_errors if is_wifi else status.cdc_errors
+        if status is None:
+            physical_errors = unknown
+        else:
+            physical_errors = str(
+                status.uart_dma_errors if is_wifi else status.cdc_errors
+            )
         control_state = snapshot.firmware_control_state
         reported_livestream_target = (
             None if control_state is None else control_state.livestream_target
@@ -271,24 +283,30 @@ class MainWindow(QMainWindow):
             signal_blocker = QSignalBlocker(self.live_target_combo)
             self.live_target_combo.setCurrentText(reported_livestream_target)
             del signal_blocker
-        live_drops = 0
-        if control_state is not None:
-            live_drops = (control_state.live_drops_iis or 0) + (
-                control_state.live_drops_jy or 0
+        if control_state is None:
+            live_drops = unknown
+        else:
+            live_drops = str(
+                (control_state.live_drops_iis or 0) + (control_state.live_drops_jy or 0)
             )
-        uptime = "—" if status is None else f"{status.uptime_us / 1_000_000.0:.1f}s"
+        uptime = unknown if status is None else f"{status.uptime_us / 1_000_000.0:.1f}s"
         health_values = {
             "sample_rate": f"{snapshot.sample_rate_hz:,.0f}",
             "crc_errors": str(snapshot.parser_stats.crc_errors),
             "sequence_gaps": str(snapshot.parser_stats.sequence_gaps),
-            "source_drops": str(source_drops),
-            "transport_drops": str(transport_drops),
-            "physical_errors": str(physical_errors),
-            "live_drops": str(live_drops),
+            "source_drops": source_drops,
+            "transport_drops": transport_drops,
+            "physical_errors": physical_errors,
+            "live_drops": live_drops,
             "uptime": uptime,
         }
         for key, value in health_values.items():
-            self.health_value_labels[key].setText(value)
+            label = self.health_value_labels[key]
+            label.setText(value)
+            if key in _ERROR_HEALTH_KEYS and value not in ("0", unknown):
+                label.setToolTip(f"{key} is non-zero; open DIAGNOSTICS for detail")
+            else:
+                label.setToolTip("")
 
     def update_health(self, health: AcquisitionHealth) -> None:
         """Forward host-side counters to the diagnostics page."""
