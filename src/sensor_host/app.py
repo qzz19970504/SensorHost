@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sys
 
+from PyQt6.QtCore import QSettings
 from PyQt6.QtWidgets import QApplication
 
 from sensor_host.presentation import (
@@ -14,10 +15,33 @@ from sensor_host.presentation import (
     load_application_fonts,
 )
 from sensor_host.transport import CdcSerialTransport
+from sensor_host.presentation.connection_view import discover_ipv4_interfaces
 
 
 SMOKE_TEST_ARGUMENT = "--smoke-test"
 OFFSCREEN_PLATFORM = "offscreen"
+
+
+def _wire_acquisition_controls(
+    window: MainWindow,
+    controller: AppController,
+) -> None:
+    """Connect acquisition toolbar actions to the selected-node controller."""
+    window.clear_requested.connect(controller.clear_display_samples)
+    window.start_requested.connect(controller.start_acquisition)
+    window.stop_requested.connect(controller.stop_acquisition)
+    window.livestream_requested.connect(
+        lambda target: _set_and_query_livestream(controller, target)
+    )
+
+
+def _set_and_query_livestream(
+    controller: AppController,
+    target: str,
+) -> None:
+    """Set a live target and request authoritative state for GUI synchronization."""
+    controller.set_livestream(target)
+    controller.request_livestream()
 
 
 def _create_application(arguments: list[str]) -> QApplication:
@@ -34,6 +58,17 @@ def _create_application(arguments: list[str]) -> QApplication:
     return application
 
 
+def _fit_window_to_available_geometry(window: MainWindow) -> None:
+    """Clamp the initial window size to the usable work area (UI-08)."""
+    screen = QApplication.primaryScreen()
+    if screen is None:
+        return
+    available = screen.availableGeometry()
+    width = min(window.width(), max(available.width(), window.minimumWidth()))
+    height = min(window.height(), max(available.height(), window.minimumHeight()))
+    window.resize(width, height)
+
+
 def _run_smoke_test(application: QApplication) -> int:
     """Construct and render one offscreen window without serial discovery."""
     window = MainWindow()
@@ -45,10 +80,12 @@ def _run_smoke_test(application: QApplication) -> int:
 
 def _run_interactive(application: QApplication) -> int:
     """Wire transports and controllers, then run the interactive event loop."""
-    window = MainWindow()
-    controller = AppController(CdcSerialTransport)
+    settings = QSettings("OpenAI", "STM32SensorHost")
+    window = MainWindow(settings=settings)
+    controller = AppController(CdcSerialTransport, settings=settings)
 
     def refresh_devices() -> None:
+        window.set_network_interfaces(discover_ipv4_interfaces())
         discovery = CdcSerialTransport()
         try:
             devices = discovery.discover()
@@ -58,10 +95,13 @@ def _run_interactive(application: QApplication) -> int:
         window.set_devices([(device.device_id, device.label) for device in devices])
 
     window.connect_requested.connect(controller.connect_device)
+    window.wifi_start_requested.connect(controller.start_wifi_server)
     window.disconnect_requested.connect(controller.disconnect_device)
     window.pause_toggled.connect(controller.set_display_paused)
+    window.pause_toggled.connect(window.set_display_paused)
     window.record_toggled.connect(controller.set_recording)
     window.watermark_requested.connect(controller.set_watermark)
+    _wire_acquisition_controls(window, controller)
     window.window_combo.currentIndexChanged.connect(
         lambda: controller.set_window_seconds(float(window.window_combo.currentData()))
     )
@@ -70,10 +110,20 @@ def _run_interactive(application: QApplication) -> int:
     controller.snapshot_ready.connect(window.update_snapshot)
     controller.health_ready.connect(window.update_health)
     controller.cli_response.connect(window.console_view.append_response)
+    controller.cli_response_from.connect(window.console_view.append_response_from)
+    controller.selected_node_changed.connect(window.console_view.set_current_node)
     controller.error_raised.connect(window.console_view.append_error)
+    controller.error_raised.connect(window.show_error)
     controller.connection_changed.connect(lambda connected, _device: window.set_connected(connected))
+    controller.wifi_server_changed.connect(window.set_wifi_server_state)
+    controller.nodes_changed.connect(window.set_nodes)
+    controller.selected_node_changed.connect(window.node_sidebar.set_selected_node)
+    window.node_sidebar.node_selected.connect(controller.select_node)
+    window.node_sidebar.alias_requested.connect(controller.set_alias)
     application.aboutToQuit.connect(controller.disconnect_device)
     refresh_devices()
+    window.wifi_panel.restore_settings(settings)
+    _fit_window_to_available_geometry(window)
     window.show()
     return application.exec()
 

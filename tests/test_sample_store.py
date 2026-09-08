@@ -67,3 +67,14 @@ def test_two_point_budget_keeps_oldest_and_latest_visible_samples() -> None:
     assert snapshot.time_s.size == 2
     assert snapshot.time_s[0] == pytest.approx(-0.009)
     assert snapshot.time_s[-1] == 0.0
+
+
+def test_clear_samples_discards_history_and_accepts_new_data():
+    store = RealtimeSampleStore()
+    store.append_iis((make_iis_sample(1000, 5),))
+    store.clear_samples()
+    assert store.snapshot(10, 100).time_s.size == 0
+    store.append_iis((make_iis_sample(2000, 10),))
+    snapshot = store.snapshot(10, 100)
+    assert snapshot.time_s.size == 1
+    assert snapshot.x_g[0] == pytest.approx(10 * 0.000061)

@@ -11,7 +11,13 @@ import numpy as np
 from numpy.typing import NDArray
 
 from sensor_host.acquisition.models import UiSnapshot
-from sensor_host.protocol import IisSample, Jy61plSample, ParserStats, StatusV1
+from sensor_host.protocol import (
+    FirmwareControlState,
+    IisSample,
+    Jy61plSample,
+    ParserStats,
+    StatusV1,
+)
 
 
 _DEFAULT_RETENTION_SECONDS = 30.0
@@ -78,8 +84,14 @@ class RealtimeSampleStore:
         self._latest_orientation: Jy61plSample | None = None
         self._orientation_received_s: float | None = None
         self._firmware_status: StatusV1 | None = None
+        self._firmware_control_state: FirmwareControlState | None = None
         self._parser_stats = ParserStats()
         self._lock = Lock()
+
+    def clear_samples(self) -> None:
+        """Discard plot history atomically, preserving status and orientation."""
+        with self._lock:
+            self._chunks.clear()
 
     def append_iis(self, samples: tuple[IisSample, ...]) -> None:
         """Append one decoded IIS batch and discard data beyond retention."""
@@ -119,6 +131,11 @@ class RealtimeSampleStore:
         with self._lock:
             self._firmware_status = status
 
+    def update_control_state(self, state: FirmwareControlState) -> None:
+        """Replace the latest structured text control-state snapshot."""
+        with self._lock:
+            self._firmware_control_state = state
+
     def update_parser_stats(self, stats: ParserStats) -> None:
         """Copy parser counters so callers cannot mutate stored health state."""
         with self._lock:
@@ -146,6 +163,7 @@ class RealtimeSampleStore:
             orientation = self._latest_orientation
             orientation_received_s = self._orientation_received_s
             firmware_status = self._firmware_status
+            firmware_control_state = self._firmware_control_state
             parser_stats = replace(self._parser_stats)
 
         if timestamps_us.size:
@@ -175,6 +193,7 @@ class RealtimeSampleStore:
             firmware_status=firmware_status,
             parser_stats=parser_stats,
             sample_rate_hz=sample_rate_hz,
+            firmware_control_state=firmware_control_state,
         )
 
     def _prune_locked(self, latest_timestamp_us: float) -> None:

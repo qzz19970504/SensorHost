@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -30,8 +31,15 @@ class VibrationView(QWidget):
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(8)
 
-        controls = QHBoxLayout()
-        controls.addStretch(1)
+        self.header_actions = QWidget(self)
+        self.header_actions.setProperty("role", "card-actions")
+        self.header_actions.setSizePolicy(
+            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Fixed,
+        )
+        controls = QHBoxLayout(self.header_actions)
+        controls.setContentsMargins(0, 0, 0, 0)
+        controls.setSpacing(4)
         self.x_toggle = self._create_channel_toggle("X", True)
         self.y_toggle = self._create_channel_toggle("Y", True)
         self.z_toggle = self._create_channel_toggle("Z", True)
@@ -42,10 +50,17 @@ class VibrationView(QWidget):
         self.auto_y_button.setCheckable(True)
         self.auto_y_button.setChecked(True)
         controls.addWidget(self.auto_y_button)
+        self.reset_view_button = QPushButton("RESET VIEW")
+        self.reset_view_button.clicked.connect(self._reset_view)
+        controls.addWidget(self.reset_view_button)
+        self.clear_button = QPushButton("CLEAR")
+        self.clear_button.setAccessibleName("Clear plotted samples")
+        self.clear_button.setToolTip("Clear current node plot history; acquisition and recording continue")
+        controls.addWidget(self.clear_button)
         self.paused_badge = QLabel("")
         self.paused_badge.setProperty("role", "muted")
+        self.paused_badge.hide()
         controls.addWidget(self.paused_badge)
-        root_layout.addLayout(controls)
 
         self.plot = pg.PlotWidget(background=COLORS["panel_alt"])
         self.plot.setLabel("bottom", "TIME", units="s")
@@ -53,6 +68,9 @@ class VibrationView(QWidget):
         self.plot.showGrid(x=True, y=True, alpha=_GRID_ALPHA)
         self.plot.addLegend(offset=(-8, 8))
         self.plot.setMouseEnabled(x=True, y=True)
+        self.plot.setToolTip(
+            "Left axis auto-scales with an SI prefix (mg, µg); plotted values are raw g."
+        )
         self.x_curve = self._create_curve("X", COLORS["red"])
         self.y_curve = self._create_curve("Y", COLORS["green"])
         self.z_curve = self._create_curve("Z", COLORS["blue"])
@@ -79,10 +97,17 @@ class VibrationView(QWidget):
             f"{snapshot.time_s.size:,} visible points"
         )
 
+    def clear(self) -> None:
+        """Clear rendered history without changing pause or channel settings."""
+        for curve in (self.x_curve, self.y_curve, self.z_curve):
+            curve.clear()
+        self.rate_label.setText("0 samples/s · 0 visible points")
+
     def set_paused(self, is_paused: bool) -> None:
         """Freeze or resume only display updates, leaving acquisition untouched."""
         self._is_paused = is_paused
         self.paused_badge.setText("DISPLAY PAUSED" if is_paused else "")
+        self.paused_badge.setVisible(is_paused)
 
     def _create_curve(self, name: str, color: str) -> pg.PlotDataItem:
         curve = self.plot.plot(
@@ -96,8 +121,15 @@ class VibrationView(QWidget):
     @staticmethod
     def _create_channel_toggle(name: str, is_checked: bool) -> QCheckBox:
         toggle = QCheckBox(name)
+        toggle.setProperty("role", "channel-toggle")
         toggle.setChecked(is_checked)
         return toggle
 
     def _set_auto_y(self, is_enabled: bool) -> None:
         self.plot.enableAutoRange(axis="y", enable=is_enabled)
+
+    def _reset_view(self) -> None:
+        """Return to following the latest samples after manual pan/zoom (UI-16)."""
+        self.auto_y_button.setChecked(True)
+        self.plot.enableAutoRange(axis="x")
+        self.plot.enableAutoRange(axis="y")

@@ -8,7 +8,7 @@ from enum import Enum
 import numpy as np
 from numpy.typing import NDArray
 
-from sensor_host.protocol import Jy61plSample, ParserStats, StatusV1
+from sensor_host.protocol import FirmwareControlState, Jy61plSample, ParserStats, StatusV1
 
 
 @dataclass(frozen=True)
@@ -24,6 +24,7 @@ class UiSnapshot:
     firmware_status: StatusV1 | None
     parser_stats: ParserStats
     sample_rate_hz: float
+    firmware_control_state: FirmwareControlState | None = None
 
 
 @dataclass(frozen=True)
@@ -41,6 +42,8 @@ class ConnectionState(str, Enum):
 
     DISCONNECTED = "disconnected"
     CONNECTING = "connecting"
+    CONNECTED = "connected"
     STREAMING = "streaming"
     RECONNECTING = "reconnecting"
     STOPPING = "stopping"
+    OFFLINE = "offline"

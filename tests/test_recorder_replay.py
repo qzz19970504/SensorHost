@@ -10,6 +10,7 @@ def test_recorder_preserves_exact_input_and_writes_metadata(
     recording_path = tmp_path / "session.sdf1"
     recorder = RawSessionRecorder(queue_capacity_bytes=1024)
     recorder.start(recording_path, {"protocol": "SDF1", "version": 1})
+    recorder.update_metadata({"transport": "wifi", "segment": 2})
 
     assert recorder.submit(b"SDF") is True
     assert recorder.submit(b"1-payload") is True
@@ -20,6 +21,8 @@ def test_recorder_preserves_exact_input_and_writes_metadata(
         recording_path.with_suffix(".json").read_text(encoding="utf-8")
     )
     assert metadata["bytes_written"] == len(b"SDF1-payload")
+    assert metadata["transport"] == "wifi"
+    assert metadata["segment"] == 2
     assert summary.bytes_written == len(b"SDF1-payload")
     assert b"".join(replay_chunks(recording_path, chunk_size=3)) == b"SDF1-payload"
 

@@ -105,6 +105,7 @@ class Frame:
     timestamp_us: int
     item_count: int
     payload: bytes
+    raw_bytes: bytes = b""
     device_uuid: uuid.UUID | None = None
     iis_words: tuple[IisFifoWord, ...] | None = None
     iis_samples: tuple[IisSample, ...] | None = None
@@ -378,6 +379,7 @@ class StreamParser:
                 item_count,
                 payload,
                 device_uuid,
+                candidate,
             )
             if frame is not None:
                 if message_type in (
@@ -398,6 +400,7 @@ class StreamParser:
         item_count: int,
         payload: bytes,
         device_uuid: uuid.UUID | None,
+        raw_bytes: bytes,
     ) -> Frame | None:
         common = dict(
             message_type=message_type,
@@ -406,6 +409,7 @@ class StreamParser:
             timestamp_us=timestamp_us,
             item_count=item_count,
             payload=payload,
+            raw_bytes=raw_bytes,
             device_uuid=device_uuid,
         )
         if message_type is MessageType.IIS3DWB_FIFO:

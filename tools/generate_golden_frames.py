@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent
-GOLDEN_DIR = ROOT / "golden"
+GOLDEN_DIR = ROOT.parent / "tests" / "golden"
 HEADER_SIZE = 28
 DATA_HEADER_SIZE = 44
 MAX_PAYLOAD_SIZE = 3577

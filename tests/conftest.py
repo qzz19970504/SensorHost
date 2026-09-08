@@ -9,8 +9,8 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
-GOLDEN_DIR = REPOSITORY_ROOT / "test" / "golden"
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+GOLDEN_DIR = REPOSITORY_ROOT / "tests" / "golden"
 
 # GUI modules import PyQt6 at collection time.  When the optional PyQt6
 # dependency is absent (e.g. a bare protocol-only environment) ignore them so
@@ -18,6 +18,7 @@ GOLDEN_DIR = REPOSITORY_ROOT / "test" / "golden"
 # with a collection ImportError.  Paths are relative to this conftest directory.
 _GUI_TEST_MODULES = [
     "test_app_smoke.py",
+    "test_connection_widgets.py",
     "test_orientation.py",
     "test_packaging.py",
     "test_widgets.py",
@@ -25,10 +26,9 @@ _GUI_TEST_MODULES = [
 if importlib.util.find_spec("PyQt6") is None:
     collect_ignore = list(_GUI_TEST_MODULES)
 
-# Make both the installed package source (``sensor_host``) and the repository
-# root (``host.tools``) importable regardless of the pytest working directory,
-# so ``pytest`` run directly under ``host/`` behaves like ``test_stage1.ps1``.
-for _import_root in (str(REPOSITORY_ROOT / "host" / "src"), str(REPOSITORY_ROOT)):
+# Make package sources and repository-local acceptance tools importable
+# regardless of pytest's working directory.
+for _import_root in (str(REPOSITORY_ROOT / "src"), str(REPOSITORY_ROOT)):
     if _import_root not in sys.path:
         sys.path.insert(0, _import_root)
 
@@ -36,6 +36,11 @@ for _import_root in (str(REPOSITORY_ROOT / "host" / "src"), str(REPOSITORY_ROOT)
 @pytest.fixture
 def golden_stream() -> bytes:
     return (GOLDEN_DIR / "stream_v1_frames.bin").read_bytes()
+
+
+@pytest.fixture(autouse=True)
+def isolated_application_data(tmp_path, monkeypatch):
+    monkeypatch.setenv("SENSOR_HOST_DATA_DIR", str(tmp_path / "host"))
 
 
 class IdleFakeTransport:

@@ -6,7 +6,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $RepositoryRoot = [System.IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
-$HostRoot = Join-Path $RepositoryRoot 'host'
+$HostRoot = $RepositoryRoot
 $BuildRoot = Join-Path $RepositoryRoot 'build\host-package'
 $BuildEnvironment = Join-Path $BuildRoot '.venv'
 $BuildPython = Join-Path $BuildEnvironment 'Scripts\python.exe'
@@ -58,7 +58,7 @@ function Invoke-PackagedSmokeTest {
         [string]$Executable
     )
 
-    $Process = Start-Process -FilePath $Executable -ArgumentList '--smoke-test' -PassThru
+    $Process = Start-Process -FilePath $Executable -ArgumentList '--smoke-test' -WindowStyle Hidden -PassThru
     if (-not $Process.WaitForExit($SmokeTimeoutMilliseconds)) {
         $TaskKill = Join-Path $env:SystemRoot 'System32\taskkill.exe'
         & $TaskKill '/PID' $Process.Id '/T' '/F' | Out-Null
@@ -89,7 +89,7 @@ if (-not $SkipTests) {
     $PreviousQtPlatform = $env:QT_QPA_PLATFORM
     try {
         $env:QT_QPA_PLATFORM = 'offscreen'
-        & $BuildPython -m pytest (Join-Path $HostRoot 'tests') (Join-Path $RepositoryRoot 'test\test_protocol.py') -q
+        & $BuildPython -m pytest (Join-Path $HostRoot 'tests') -q
         if ($LASTEXITCODE -ne 0) {
             throw 'Host source test gate failed.'
         }

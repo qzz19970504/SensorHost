@@ -1,6 +1,6 @@
 from sensor_host.protocol import Frame, MessageType
 from sensor_host.tools.dual_output_compare import compare_sensor_frames
-from host.tools import dual_output_acceptance
+from tools import dual_output_acceptance
 
 
 def frame(message_type: MessageType, sequence: int, payload: bytes) -> Frame:
