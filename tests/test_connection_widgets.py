@@ -2,6 +2,7 @@ import uuid
 
 import pytest
 from PyQt6.QtCore import QSettings, Qt
+from PyQt6.QtWidgets import QMenu
 
 from sensor_host.acquisition import ConnectionState, NodeSummary, TransportKind
 from sensor_host.presentation.connection_view import (
@@ -146,6 +147,64 @@ def test_node_sidebar_remove_menu_rejects_online_wifi_and_offline_cdc(qtbot) -> 
 
     assert sidebar._context_menu_for_item(sidebar.node_list.item(0)) is None
     assert sidebar._context_menu_for_item(sidebar.node_list.item(1)) is None
+
+
+@pytest.mark.parametrize(
+    "connection_state",
+    [
+        ConnectionState.DISCONNECTED,
+        ConnectionState.CONNECTING,
+        ConnectionState.STOPPING,
+    ],
+)
+def test_node_sidebar_remove_menu_rejects_transitional_wifi_states(
+    qtbot, connection_state: ConnectionState
+) -> None:
+    sidebar = NodeSidebar()
+    qtbot.addWidget(sidebar)
+    sidebar.set_nodes(
+        [
+            NodeSummary(
+                node_id="wifi-transitional",
+                transport_kind=TransportKind.WIFI,
+                peer="192.168.43.20:5000",
+                connection_state=connection_state,
+                alias="Transitional",
+            )
+        ]
+    )
+
+    assert sidebar._context_menu_for_item(sidebar.node_list.item(0)) is None
+
+
+def test_node_sidebar_discards_context_menu_after_it_closes(
+    qtbot, monkeypatch
+) -> None:
+    sidebar = NodeSidebar()
+    qtbot.addWidget(sidebar)
+    sidebar.set_nodes(
+        [
+            NodeSummary(
+                node_id="wifi-old",
+                transport_kind=TransportKind.WIFI,
+                peer="192.168.43.20:5000",
+                connection_state=ConnectionState.RECONNECTING,
+                alias="Old",
+            )
+        ]
+    )
+    sidebar.show()
+    item = sidebar.node_list.item(0)
+    position = sidebar.node_list.visualItemRect(item).center()
+    monkeypatch.setattr(QMenu, "exec", lambda _menu, _position: None)
+
+    sidebar._show_context_menu(position)
+
+    assert len(sidebar.node_list.findChildren(QMenu)) == 1
+    qtbot.waitUntil(
+        lambda: len(sidebar.node_list.findChildren(QMenu)) == 0,
+        timeout=500,
+    )
 
 
 def test_offline_node_cannot_become_command_target(qtbot) -> None:

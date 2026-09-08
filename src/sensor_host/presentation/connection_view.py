@@ -214,7 +214,12 @@ _ALIAS_ROLE = _NODE_ID_ROLE + 1
 _CONNECTED_ROLE = _NODE_ID_ROLE + 2
 _UUID_ROLE = _NODE_ID_ROLE + 3
 _TRANSPORT_ROLE = _NODE_ID_ROLE + 4
+_STATE_ROLE = _NODE_ID_ROLE + 5
 _ONLINE_STATES = {ConnectionState.CONNECTED, ConnectionState.STREAMING}
+_REMOVABLE_STATE_VALUES = {
+    ConnectionState.OFFLINE.value,
+    ConnectionState.RECONNECTING.value,
+}
 
 
 class NodeSidebar(QFrame):
@@ -283,6 +288,7 @@ class NodeSidebar(QFrame):
             item.setData(_ALIAS_ROLE, node.alias)
             item.setData(_UUID_ROLE, uuid_suffix)
             item.setData(_TRANSPORT_ROLE, node.transport_kind.value)
+            item.setData(_STATE_ROLE, node.connection_state.value)
             is_online = node.connection_state in _ONLINE_STATES
             item.setData(_CONNECTED_ROLE, is_online)
             if is_online:
@@ -304,11 +310,14 @@ class NodeSidebar(QFrame):
         if menu is not None:
             global_position = self.node_list.viewport().mapToGlobal(position)
             menu.exec(global_position)
+            menu.deleteLater()
 
     def _context_menu_for_item(self, item: QListWidgetItem | None) -> QMenu | None:
-        if item is None or item.data(_CONNECTED_ROLE):
+        if item is None:
             return None
         if item.data(_TRANSPORT_ROLE) != TransportKind.WIFI.value:
+            return None
+        if item.data(_STATE_ROLE) not in _REMOVABLE_STATE_VALUES:
             return None
         node_id = str(item.data(_NODE_ID_ROLE))
         menu = QMenu(self.node_list)
