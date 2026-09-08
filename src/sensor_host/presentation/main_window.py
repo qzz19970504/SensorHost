@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import QSettings, QSignalBlocker, QTimer, Qt, pyqtSignal
-from PyQt6.QtGui import QCloseEvent
+from PyQt6.QtGui import QCloseEvent, QShowEvent
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from sensor_host.presentation.native_chrome import apply_windows_title_bar
 from sensor_host.presentation.vibration_view import VibrationView
 from sensor_host.presentation.controls import IntegratedComboBox
 from sensor_host.presentation.orientation_view import AttitudeView, OrientationView
@@ -104,6 +105,7 @@ class MainWindow(QMainWindow):
 
     connect_requested = pyqtSignal(str)
     disconnect_requested = pyqtSignal()
+    clear_requested = pyqtSignal()
     pause_toggled = pyqtSignal(bool)
     record_toggled = pyqtSignal(bool)
     watermark_requested = pyqtSignal(int)
@@ -166,7 +168,7 @@ class MainWindow(QMainWindow):
         root_layout.addWidget(self.workspace_splitter, stretch=1)
 
         self.connect_button.clicked.connect(self._emit_connect_requested)
-        self.disconnect_button.clicked.connect(self.disconnect_requested)
+        self.vibration_view.clear_button.clicked.connect(self._clear_canvas)
         self.pause_button.toggled.connect(self.pause_toggled)
         self.record_button.toggled.connect(self.record_toggled)
         self.start_button.clicked.connect(self.start_requested)
@@ -194,8 +196,11 @@ class MainWindow(QMainWindow):
         self.device_combo.setEnabled(not is_connected)
         self.transport_mode_combo.setEnabled(not is_connected)
         self.wifi_panel.setEnabled(not is_connected)
-        self.connect_button.setEnabled(not is_connected)
-        self.disconnect_button.setEnabled(is_connected)
+        self.connect_button.setText("DISCONNECT" if is_connected else "CONNECT")
+        self.connect_button.setAccessibleName("Disconnect" if is_connected else "Connect")
+        self.connect_button.setProperty("role", "danger" if is_connected else "primary")
+        self.connect_button.style().unpolish(self.connect_button)
+        self.connect_button.style().polish(self.connect_button)
         self._connected = is_connected
         if is_connected:
             self.connection_badge.setText("● CONNECTED")
@@ -209,6 +214,16 @@ class MainWindow(QMainWindow):
         self.connection_badge.style().unpolish(self.connection_badge)
         self.connection_badge.style().polish(self.connection_badge)
         self._refresh_node_controls()
+
+    def showEvent(self, event: QShowEvent) -> None:
+        super().showEvent(event)
+        apply_windows_title_bar(self)
+
+    def _clear_canvas(self) -> None:
+        """Discard cached plot history even while the display is frozen."""
+        self._latest_snapshot = None
+        self.vibration_view.clear()
+        self.clear_requested.emit()
 
     def set_display_paused(self, is_paused: bool) -> None:
         """Mark every display-frozen view so frozen values are not read as live."""
@@ -263,7 +278,6 @@ class MainWindow(QMainWindow):
             self.device_combo,
             self.connect_button,
             self.refresh_button,
-            self.disconnect_button,
             self.reset_layout_button,
             self.window_combo,
             self.watermark_combo,
@@ -472,10 +486,6 @@ class MainWindow(QMainWindow):
         self.connection_badge = QLabel("DISCONNECTED")
         self.connection_badge.setMinimumWidth(110)
         layout.addWidget(self.connection_badge)
-        self.disconnect_button = QPushButton("DISCONNECT")
-        self.disconnect_button.setProperty("role", "danger")
-        self.disconnect_button.setAccessibleName("Disconnect")
-        layout.addWidget(self.disconnect_button)
         self.reset_layout_button = QPushButton("RESET LAYOUT")
         self.reset_layout_button.clicked.connect(self._reset_layout)
         self.reset_layout_button.setAccessibleName("Reset layout")
@@ -678,6 +688,9 @@ class MainWindow(QMainWindow):
         return tab
 
     def _emit_connect_requested(self) -> None:
+        if self._connected:
+            self.disconnect_requested.emit()
+            return
         if self.transport_mode_combo.currentText() == "WI-FI":
             try:
                 config = self.wifi_panel.server_config()
@@ -713,4 +726,7 @@ class MainWindow(QMainWindow):
         is_wifi = self.transport_mode_combo.currentText() == "WI-FI"
         self.device_combo.setHidden(is_wifi)
         self.wifi_panel.setHidden(not is_wifi)
-        self.connect_button.setText("START LISTENER" if is_wifi else "CONNECT")
+        self.connect_button.setToolTip(
+            "Start/stop the Wi-Fi listener and its connections"
+            if is_wifi else "Connect/disconnect the selected serial device"
+        )

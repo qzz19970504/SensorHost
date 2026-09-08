@@ -53,6 +53,10 @@ class VibrationView(QWidget):
         self.reset_view_button = QPushButton("RESET VIEW")
         self.reset_view_button.clicked.connect(self._reset_view)
         controls.addWidget(self.reset_view_button)
+        self.clear_button = QPushButton("CLEAR")
+        self.clear_button.setAccessibleName("Clear plotted samples")
+        self.clear_button.setToolTip("Clear current node plot history; acquisition and recording continue")
+        controls.addWidget(self.clear_button)
         self.paused_badge = QLabel("")
         self.paused_badge.setProperty("role", "muted")
         self.paused_badge.hide()
@@ -92,6 +96,12 @@ class VibrationView(QWidget):
             f"{snapshot.sample_rate_hz:,.0f} samples/s · "
             f"{snapshot.time_s.size:,} visible points"
         )
+
+    def clear(self) -> None:
+        """Clear rendered history without changing pause or channel settings."""
+        for curve in (self.x_curve, self.y_curve, self.z_curve):
+            curve.clear()
+        self.rate_label.setText("0 samples/s · 0 visible points")
 
     def set_paused(self, is_paused: bool) -> None:
         """Freeze or resume only display updates, leaving acquisition untouched."""

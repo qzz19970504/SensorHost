@@ -62,7 +62,7 @@ def test_disconnected_window_disables_stream_controls(qtbot) -> None:
     window.set_connected(False)
 
     assert window.connect_button.isEnabled()
-    assert not window.disconnect_button.isEnabled()
+    assert window.connect_button.text() == "CONNECT"
     assert not window.pause_button.isEnabled()
     assert not window.record_button.isEnabled()
     assert not window.live_target_combo.isEnabled()
@@ -157,7 +157,7 @@ def test_window_switches_between_cdc_and_wifi_connection_controls(qtbot) -> None
 
     assert window.device_combo.isHidden()
     assert not window.wifi_panel.isHidden()
-    assert window.connect_button.text() == "START LISTENER"
+    assert window.connect_button.text() == "CONNECT"
 
 
 def test_window_emits_validated_wifi_configuration(qtbot) -> None:
@@ -563,7 +563,8 @@ def test_primary_and_danger_roles_mark_operation_hierarchy(qtbot) -> None:
     assert window.connect_button.property("role") == "primary"
     assert window.start_button.property("role") == "primary"
     assert window.stop_button.property("role") == "danger"
-    assert window.disconnect_button.property("role") == "danger"
+    window.set_connected(True)
+    assert window.connect_button.property("role") == "danger"
 
 
 def test_theme_separates_disabled_danger_and_primary_roles() -> None:
@@ -855,7 +856,6 @@ def test_key_controls_expose_accessible_names(qtbot) -> None:
     qtbot.addWidget(window)
     for widget in (
         window.connect_button,
-        window.disconnect_button,
         window.start_button,
         window.stop_button,
         window.pause_button,
@@ -897,10 +897,9 @@ def test_stable_tab_order_across_primary_controls(qtbot) -> None:
     window.show()
     qtbot.wait(20)
 
-    # connect_button is disabled while connected, so start from refresh_button.
-    window.refresh_button.setFocus()
-    qtbot.keyClick(window.refresh_button, Qt.Key.Key_Tab)
-    assert window.focusWidget() is window.disconnect_button
+    window.connect_button.setFocus()
+    qtbot.keyClick(window.connect_button, Qt.Key.Key_Tab)
+    assert window.focusWidget() is window.refresh_button
 
     window.start_button.setFocus()
     qtbot.keyClick(window.start_button, Qt.Key.Key_Tab)
@@ -932,3 +931,37 @@ def test_layout_persists_and_reset_clears_ui_keys(qtbot, tmp_path) -> None:
     settings.beginGroup("ui")
     assert settings.childKeys() == []
     settings.endGroup()
+
+
+def test_connection_button_toggles_cdc_and_listener(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.set_devices([("COM7", "COM7")])
+    with qtbot.waitSignal(window.connect_requested):
+        window.connect_button.click()
+    window.set_connected(True)
+    assert window.connect_button.text() == "DISCONNECT"
+    with qtbot.waitSignal(window.disconnect_requested):
+        window.connect_button.click()
+    window.set_connected(False)
+    window.transport_mode_combo.setCurrentText("WI-FI")
+    assert window.connect_button.text() == "CONNECT"
+    window.set_wifi_server_state(True, "LISTENING")
+    assert window.connect_button.text() == "DISCONNECT"
+    with qtbot.waitSignal(window.disconnect_requested):
+        window.connect_button.click()
+
+
+def test_clear_canvas_works_while_paused_and_invalidates_cached_snapshot(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    snapshot = make_snapshot(*(np.array([0.0, 1.0]) for _ in range(4)))
+    window.update_snapshot(snapshot)
+    window.set_display_paused(True)
+    with qtbot.waitSignal(window.clear_requested):
+        window.vibration_view.clear_button.click()
+    assert window.vibration_view.x_curve.getData()[0] is None
+    window.tabs.setCurrentWidget(window.console_tab)
+    window.tabs.setCurrentWidget(window.live_tab)
+    window.set_display_paused(False)
+    assert window.vibration_view.x_curve.getData()[0] is None

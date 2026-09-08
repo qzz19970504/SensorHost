@@ -17,6 +17,8 @@ DEFAULT_TCP_PORT = 54_321
 DEFAULT_UDP_PORT = 12_345
 DEFAULT_MAXIMUM_CLIENTS = 16
 DEFAULT_WAKE_INTERVAL_SECONDS = 2.0
+# The host queries status every 5 seconds, including while acquisition is idle.
+_GATEWAY_INACTIVITY_SECONDS = 20.0
 _MAXIMUM_CONTROL_BYTES = 94
 _MAXIMUM_ASCII_BYTE = 0x7F
 _WAKE_PAYLOAD = b"TCPCONNECT"
@@ -62,6 +64,7 @@ class AcceptedSocketTransport:
     def __init__(self, stream_socket: socket.socket, peer: str) -> None:
         self._socket: socket.socket | None = stream_socket
         self.peer = peer
+        self._last_received_s = time.monotonic()
 
     def discover(self) -> list[DeviceDescriptor]:
         return []
@@ -91,11 +94,17 @@ class AcceptedSocketTransport:
         try:
             payload = stream_socket.recv(max_bytes)
         except socket.timeout:
+            if time.monotonic() - self._last_received_s >= _GATEWAY_INACTIVITY_SECONDS:
+                self.close()
+                raise TransportError(
+                    f"gateway {self.peer} inactive for {_GATEWAY_INACTIVITY_SECONDS:g} seconds"
+                )
             return b""
         except OSError as error:
             raise TransportError(f"cannot read gateway {self.peer}: {error}") from error
         if not payload:
             raise TransportError(f"gateway {self.peer} disconnected")
+        self._last_received_s = time.monotonic()
         return payload
 
     def write_control(self, command: bytes) -> None:

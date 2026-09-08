@@ -27,6 +27,7 @@ def _wire_acquisition_controls(
     controller: AppController,
 ) -> None:
     """Connect acquisition toolbar actions to the selected-node controller."""
+    window.clear_requested.connect(controller.clear_display_samples)
     window.start_requested.connect(controller.start_acquisition)
     window.stop_requested.connect(controller.stop_acquisition)
     window.livestream_requested.connect(

@@ -625,3 +625,83 @@ def test_offline_node_does_not_steal_commands_end_to_end(qtbot) -> None:
         assert b"AT+PING" not in offline.commands
     finally:
         controller.disconnect_device()
+
+
+def test_inactive_tcp_session_releases_listener_capacity(qtbot, monkeypatch):
+    import socket
+    from sensor_host.transport import GatewayListener, gateway
+    monkeypatch.setattr(gateway, "_GATEWAY_INACTIVITY_SECONDS", 0.1)
+    listener = GatewayListener(maximum_clients=1)
+    listener.start("127.0.0.1", 0)
+    controller = AppController(RecordingIdleTransport)
+    controller._gateway_listener = listener
+    client = socket.create_connection(("127.0.0.1", listener.bound_port))
+    replacement = None
+    accepted = None
+    try:
+        old = listener.accept(0.5)
+        controller.accept_gateway_client(old)
+        qtbot.waitUntil(lambda: not controller._sessions, timeout=2000)
+        assert not listener._active_connections
+        replacement = socket.create_connection(("127.0.0.1", listener.bound_port))
+        accepted = listener.accept(0.5)
+        assert accepted is not None
+    finally:
+        if accepted is not None:
+            accepted.transport.close()
+        if replacement is not None:
+            replacement.close()
+        client.close()
+        controller.disconnect_device()
+
+
+def test_clear_action_preserves_other_nodes_and_recording_while_paused(qtbot, tmp_path):
+    from sensor_host.protocol import IisSample
+    controller = AppController(RecordingIdleTransport)
+    window = MainWindow()
+    qtbot.addWidget(window)
+    sensor_host_app._wire_acquisition_controls(window, controller)
+    try:
+        for name in ("wifi-one", "wifi-two"):
+            controller.accept_gateway_client(AcceptedGatewayClient(name, name, RecordingIdleTransport()))
+        controller.select_node("wifi-one")
+        for session in controller._sessions.values():
+            controller._session_index.bind_identity(session.node_id, uuid.uuid4())
+            session.store.append_iis((IisSample(1000, (1, 2, 3), (0.1, 0.2, 0.3)),))
+        controller.set_recording(True, tmp_path / "recording")
+        recorders = [session.recorder for session in controller._sessions.values()]
+        controller.set_display_paused(True)
+        window.set_display_paused(True)
+        window.vibration_view.clear_button.click()
+        assert controller._sessions["wifi-one"].store.snapshot(10, 100).time_s.size == 0
+        assert controller._sessions["wifi-two"].store.snapshot(10, 100).time_s.size == 1
+        assert controller._recording_active
+        assert recorders == [session.recorder for session in controller._sessions.values()]
+    finally:
+        controller.disconnect_device()
+
+
+def test_immediate_reconnect_ignores_previous_session_callbacks(qtbot):
+    controller = AppController(RecordingIdleTransport)
+    try:
+        controller.connect_device("COM6")
+        previous = controller._selected_session()
+        # Queue the failure and finished callbacks without processing GUI events.
+        previous.worker.failed.emit("old session failure")
+        controller.disconnect_device()
+        controller.connect_device("COM6")
+        current = controller._selected_session()
+        assert current is not previous
+        # Avoid destroying a running QThread in the regression's failing case.
+        current.stop_event.set()
+        current.thread.quit()
+        assert current.thread.wait(3000)
+        errors = []
+        controller.error_raised.connect(errors.append)
+        previous.worker.failed.emit("late old failure")
+        assert current.failure is None
+        assert errors == []
+        previous.thread.finished.emit()
+        assert controller._selected_session() is current
+    finally:
+        controller.disconnect_device()

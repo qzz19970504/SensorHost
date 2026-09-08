@@ -303,13 +303,16 @@ class AppController(QObject):
         self._sessions[node_id] = session
         thread.started.connect(worker.run)
         worker.stopped.connect(thread.quit, Qt.ConnectionType.DirectConnection)
+        # Queued callbacks from a closed CDC session must not affect a new
+        # connection that reuses the same port/node id.
         worker.failed.connect(
-            lambda message, session_id=node_id: self._on_worker_failed(
-                session_id, message
-            )
+            lambda message, expected=session: self._on_worker_failed(
+                expected.node_id, message
+            ) if self._sessions.get(expected.node_id) is expected else None
         )
         thread.finished.connect(
-            lambda session_id=node_id: self._on_thread_finished(session_id)
+            lambda expected=session: self._on_thread_finished(expected.node_id)
+            if self._sessions.get(expected.node_id) is expected else None
         )
         thread.start()
         if self._selected_node_id is None:
@@ -463,6 +466,13 @@ class AppController(QObject):
     @pyqtSlot(bool)
     def set_display_paused(self, paused: bool) -> None:
         self._display_paused = paused
+
+    @pyqtSlot()
+    def clear_display_samples(self) -> None:
+        """Clear only the selected node's plot buffer; recording is independent."""
+        session = self._selected_session()
+        if session is not None:
+            session.store.clear_samples()
 
     @pyqtSlot(float)
     def set_window_seconds(self, window_s: float) -> None:

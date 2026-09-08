@@ -88,6 +88,11 @@ class RealtimeSampleStore:
         self._parser_stats = ParserStats()
         self._lock = Lock()
 
+    def clear_samples(self) -> None:
+        """Discard plot history atomically, preserving status and orientation."""
+        with self._lock:
+            self._chunks.clear()
+
     def append_iis(self, samples: tuple[IisSample, ...]) -> None:
         """Append one decoded IIS batch and discard data beyond retention."""
         if not samples:

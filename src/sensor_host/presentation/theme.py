@@ -42,7 +42,7 @@ def dark_stylesheet() -> str:
     QMainWindow, QWidget {{
         background: {COLORS['background']};
         color: {COLORS['text']};
-        font-family: "Segoe UI", "Microsoft YaHei UI";
+        font-family: "Segoe UI";
         font-size: 13px;
     }}
     QFrame[card="true"] {{
@@ -74,15 +74,15 @@ def dark_stylesheet() -> str:
     }}
     QLabel[role="eyebrow"] {{
         color: {COLORS['cyan']};
-        font-family: "Consolas";
-        font-size: 12px;
+        font-family: "Segoe UI";
+        font-size: 13px;
         font-weight: 700;
-        letter-spacing: 1px;
+        letter-spacing: 0px;
     }}
     QLabel[role="muted"] {{ color: {COLORS['muted']}; }}
     QLabel[role="control-label"] {{
         color: {COLORS['text']};
-        font-size: 12px;
+        font-size: 13px;
     }}
     QLabel[role="metric"] {{
         color: {COLORS['text']};
@@ -203,7 +203,7 @@ def dark_stylesheet() -> str:
         color: {COLORS['muted']};
         padding: {SPACE.compact}px 18px;
         border-bottom: 2px solid transparent;
-        font-family: "Consolas";
+        font-family: "Segoe UI";
         font-weight: 700;
     }}
     QTabBar::tab:selected {{

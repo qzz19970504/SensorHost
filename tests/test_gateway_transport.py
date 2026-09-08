@@ -114,3 +114,27 @@ def test_wifi_server_config_rejects_loopback_interface() -> None:
             netmask="255.0.0.0",
             expected_pc_ipv4="127.0.0.1",
         )
+
+
+def test_silent_gateway_expires_but_received_bytes_renew_deadline(monkeypatch):
+    from sensor_host.transport import gateway
+    clock = [100.0]
+    monkeypatch.setattr(gateway.time, "monotonic", lambda: clock[0])
+    server, client = socket.socketpair()
+    transport = AcceptedSocketTransport(server, "silent-peer")
+    try:
+        clock[0] = 119.0
+        assert transport.read(64, 0.001) == b""
+        client.sendall(b"status")
+        assert transport.read(64, 0.01) == b"status"
+        clock[0] = 130.0
+        transport.write_control(b"AT+STATE?")
+        assert transport.read(64, 0.001) == b""
+        clock[0] = 140.0
+        with pytest.raises(TransportError, match="inactive"):
+            transport.read(64, 0.001)
+        with pytest.raises(TransportError, match="closed"):
+            transport.open("old")
+    finally:
+        transport.close()
+        client.close()

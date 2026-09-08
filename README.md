@@ -41,6 +41,12 @@ every two seconds to the subnet broadcast plus optional ESP unicast addresses.
 PC and ESP devices must share a hotspot permitting client communication; allow
 inbound TCP through Windows Firewall when prompted or configure it manually.
 
+CONNECT and DISCONNECT share one button; in Wi-Fi mode it starts/stops the listener
+and its accepted connections. A TCP connection receiving no bytes for 20 seconds is
+closed and its client slot released. Status is queried every five seconds even while idle.
+CLEAR on the vibration card discards the selected node's plot history, including while
+paused; new samples continue arriving and raw recordings are preserved.
+
 Select a device in DEVICES to view its data and send commands. Automatic commands
 are read-only UUID, STATE and LIVESTREAM queries. Use the toolbar's LIVE TARGET,
 START and STOP controls for manual acquisition: on a cold boot, connect COM6, select
