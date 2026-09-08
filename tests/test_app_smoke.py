@@ -335,6 +335,70 @@ def test_wifi_listener_blocks_cdc_and_returns_to_listening_after_client_loss(
     controller.stop_wifi_server()
 
 
+def test_remove_offline_wifi_node_keeps_listener_and_live_session(qtbot) -> None:
+    listener = RecordingListener()
+    wake = RecordingWakeService()
+    controller = AppController(
+        RecordingIdleTransport,
+        gateway_listener_factory=lambda: listener,
+        wake_service_factory=lambda _config: wake,
+    )
+    config = WifiServerConfig(
+        local_ipv4="192.168.43.100",
+        netmask="255.255.255.0",
+        expected_pc_ipv4="192.168.43.100",
+    )
+    summaries: list[list[NodeSummary]] = []
+    controller.nodes_changed.connect(summaries.append)
+
+    controller.start_wifi_server(config)
+    controller.accept_gateway_client(
+        AcceptedGatewayClient(
+            "wifi-old", "peer-old", FailingReadTransport()  # type: ignore[arg-type]
+        )
+    )
+    controller.accept_gateway_client(
+        AcceptedGatewayClient(
+            "wifi-live", "peer-live", RecordingIdleTransport()  # type: ignore[arg-type]
+        )
+    )
+    try:
+        qtbot.waitUntil(
+            lambda: any(
+                node.node_id == "wifi-old"
+                and node.connection_state is ConnectionState.RECONNECTING
+                for node in summaries[-1]
+            ),
+            timeout=2000,
+        )
+
+        controller.remove_offline_node("wifi-old")
+
+        assert controller.is_wifi_server_running
+        assert "wifi-live" in controller._sessions
+        assert [node.node_id for node in summaries[-1]] == ["wifi-live"]
+    finally:
+        controller.disconnect_device()
+
+
+def test_remove_offline_wifi_node_rejects_active_node(qtbot) -> None:
+    controller = AppController(RecordingIdleTransport)
+    errors: list[str] = []
+    controller.error_raised.connect(errors.append)
+    controller.accept_gateway_client(
+        AcceptedGatewayClient(
+            "wifi-live", "peer-live", RecordingIdleTransport()  # type: ignore[arg-type]
+        )
+    )
+    try:
+        controller.remove_offline_node("wifi-live")
+
+        assert "wifi-live" in controller._sessions
+        assert errors == ["cannot remove a connected device"]
+    finally:
+        controller.disconnect_device()
+
+
 def test_rejected_gateway_releases_listener_capacity(qtbot) -> None:
     listener = RecordingListener()
     controller = AppController(

@@ -13,6 +13,7 @@ from PyQt6.QtCore import QObject, QSettings, QThread, QTimer, Qt, pyqtSignal, py
 
 from sensor_host.acquisition import (
     AcquisitionController,
+    ConnectionState,
     DuplicateDeviceError,
     NodeSessionManager,
     NodeSummary,
@@ -361,6 +362,27 @@ class AppController(QObject):
         self._selected_node_id = node_id
         self.selected_node_changed.emit(node_id)
         self._publish_selected_session()
+
+    @pyqtSlot(str)
+    def remove_offline_node(self, node_id: str) -> None:
+        """Remove one inactive Wi-Fi node from the displayed inventory."""
+        if node_id in self._sessions:
+            self.error_raised.emit("cannot remove a connected device")
+            return
+        try:
+            summary = self._session_index.summary(node_id)
+        except KeyError:
+            self.error_raised.emit(f"unknown node: {node_id}")
+            return
+        removable_states = {ConnectionState.OFFLINE, ConnectionState.RECONNECTING}
+        if (
+            summary.transport_kind is not TransportKind.WIFI
+            or summary.connection_state not in removable_states
+        ):
+            self.error_raised.emit("only disconnected Wi-Fi devices can be removed")
+            return
+        self._session_index.remove(node_id)
+        self._emit_nodes()
 
     @pyqtSlot(str)
     def send_command(self, command: str) -> None:

@@ -4,13 +4,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PyQt6.QtCore import QSettings, QSignalBlocker, Qt, pyqtSignal
+from PyQt6.QtCore import QPoint, QSettings, QSignalBlocker, Qt, pyqtSignal
 from PyQt6.QtNetwork import QAbstractSocket, QNetworkInterface
 from PyQt6.QtWidgets import (
     QFrame,
     QLabel,
     QLineEdit,
     QListWidget,
+    QListWidgetItem,
+    QMenu,
     QPushButton,
     QScrollArea,
     QSpinBox,
@@ -18,7 +20,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from sensor_host.acquisition import ConnectionState, NodeSummary
+from sensor_host.acquisition import ConnectionState, NodeSummary, TransportKind
 from sensor_host.presentation.controls import IntegratedComboBox
 from sensor_host.presentation.spacing import SPACE
 from sensor_host.transport import DEFAULT_TCP_PORT, DEFAULT_UDP_PORT, WifiServerConfig
@@ -211,6 +213,7 @@ _NODE_ID_ROLE = int(Qt.ItemDataRole.UserRole)
 _ALIAS_ROLE = _NODE_ID_ROLE + 1
 _CONNECTED_ROLE = _NODE_ID_ROLE + 2
 _UUID_ROLE = _NODE_ID_ROLE + 3
+_TRANSPORT_ROLE = _NODE_ID_ROLE + 4
 _ONLINE_STATES = {ConnectionState.CONNECTED, ConnectionState.STREAMING}
 
 
@@ -219,6 +222,7 @@ class NodeSidebar(QFrame):
 
     node_selected = pyqtSignal(str)
     alias_requested = pyqtSignal(str, str)
+    remove_requested = pyqtSignal(str)
 
     def __init__(self) -> None:
         super().__init__()
@@ -237,6 +241,8 @@ class NodeSidebar(QFrame):
         layout.addWidget(self.target_label)
         self.node_list = QListWidget()
         self.node_list.currentItemChanged.connect(self._emit_selected_node)
+        self.node_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.node_list.customContextMenuRequested.connect(self._show_context_menu)
         layout.addWidget(self.node_list, stretch=1)
         self.alias_edit = QLineEdit()
         self.alias_edit.setPlaceholderText("Selected node alias")
@@ -276,6 +282,7 @@ class NodeSidebar(QFrame):
             item.setData(_NODE_ID_ROLE, node.node_id)
             item.setData(_ALIAS_ROLE, node.alias)
             item.setData(_UUID_ROLE, uuid_suffix)
+            item.setData(_TRANSPORT_ROLE, node.transport_kind.value)
             is_online = node.connection_state in _ONLINE_STATES
             item.setData(_CONNECTED_ROLE, is_online)
             if is_online:
@@ -290,6 +297,26 @@ class NodeSidebar(QFrame):
         self.node_list.setCurrentRow(restore_row if restore_row >= 0 else first_online_row)
         del blocker
         self._apply_current_target(emit=False)
+
+    def _show_context_menu(self, position: QPoint) -> None:
+        item = self.node_list.itemAt(position)
+        menu = self._context_menu_for_item(item)
+        if menu is not None:
+            global_position = self.node_list.viewport().mapToGlobal(position)
+            menu.exec(global_position)
+
+    def _context_menu_for_item(self, item: QListWidgetItem | None) -> QMenu | None:
+        if item is None or item.data(_CONNECTED_ROLE):
+            return None
+        if item.data(_TRANSPORT_ROLE) != TransportKind.WIFI.value:
+            return None
+        node_id = str(item.data(_NODE_ID_ROLE))
+        menu = QMenu(self.node_list)
+        remove_action = menu.addAction("REMOVE DEVICE")
+        remove_action.triggered.connect(
+            lambda _checked=False: self.remove_requested.emit(node_id)
+        )
+        return menu
 
     def set_selected_node(self, node_id: str) -> None:
         """Reflect the controller's authoritative target without re-emitting."""
