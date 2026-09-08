@@ -1,6 +1,7 @@
 param(
     [string]$Python,
-    [switch]$SkipTests
+    [switch]$SkipTests,
+    [switch]$CleanEnvironment
 )
 
 $ErrorActionPreference = 'Stop'
@@ -71,16 +72,29 @@ function Invoke-PackagedSmokeTest {
 
 $SourcePython = Resolve-PythonExecutable
 Write-Host "Using Python: $SourcePython"
-Remove-ValidatedBuildDirectory
+if ($CleanEnvironment) {
+    Remove-ValidatedBuildDirectory
+}
 New-Item -ItemType Directory -Path $BuildRoot -Force | Out-Null
 New-Item -ItemType Directory -Path $ArtifactRoot -Force | Out-Null
 
-& $SourcePython -m venv $BuildEnvironment
-if ($LASTEXITCODE -ne 0) {
-    throw "Failed to create build environment with $SourcePython."
+$ReuseEnvironment = Test-Path -LiteralPath $BuildPython -PathType Leaf
+if ($ReuseEnvironment) {
+    Write-Host "Reusing build environment: $BuildEnvironment"
+} else {
+    & $SourcePython -m venv $BuildEnvironment
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to create build environment with $SourcePython."
+    }
 }
 
-& $BuildPython -m pip install -e "$HostRoot[dev]" -r (Join-Path $HostRoot 'requirements-build.txt')
+# Reconcile requirements without upgrading already-satisfied dependencies.
+# Existing build environments already contain setuptools for editable builds.
+$InstallOptions = @()
+if ($ReuseEnvironment) {
+    $InstallOptions += '--no-build-isolation'
+}
+& $BuildPython -m pip install @InstallOptions -e "$HostRoot[dev]" -r (Join-Path $HostRoot 'requirements-build.txt')
 if ($LASTEXITCODE -ne 0) {
     throw 'Failed to install host build dependencies.'
 }

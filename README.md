@@ -28,7 +28,9 @@ git diff --check
 powershell -ExecutionPolicy Bypass -File .\tools\package_host.ps1
 ```
 
-The packager creates an isolated environment, runs the source tests, builds a one-file
+The packager reuses its isolated build environment by default (pass `-CleanEnvironment`
+to recreate it), reconciles dependencies without upgrading satisfied versions, runs
+the source tests, and builds a one-file
 Windows EXE, runs its smoke test and writes a SHA-256 manifest under `dist/host/`.
 See [build environment](docs/HOST_BUILD_ENVIRONMENT.md).
 
