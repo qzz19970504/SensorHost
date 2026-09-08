@@ -120,6 +120,7 @@ def _run_interactive(application: QApplication) -> int:
     controller.selected_node_changed.connect(window.node_sidebar.set_selected_node)
     window.node_sidebar.node_selected.connect(controller.select_node)
     window.node_sidebar.alias_requested.connect(controller.set_alias)
+    window.node_sidebar.remove_requested.connect(controller.remove_offline_node)
     application.aboutToQuit.connect(controller.disconnect_device)
     refresh_devices()
     window.wifi_panel.restore_settings(settings)
