@@ -12,8 +12,14 @@ WINDOWS_SYSTEM_ICU_DLLS = {"icuuc.dll", "icudt78.dll"}
 host_root = Path(SPECPATH).resolve()
 source_root = host_root / "src"
 entry_point = source_root / "sensor_host" / "app.py"
+application_icon = source_root / "sensor_host" / "assets" / "vibration_sensor_icon.ico"
 
-datas = []
+datas = [
+    (
+        str(source_root / "sensor_host" / "assets" / "vibration_sensor_icon.png"),
+        "sensor_host/assets",
+    )
+]
 binaries = []
 hiddenimports = []
 for package_name in ("pyqtgraph", "OpenGL"):
@@ -59,4 +65,5 @@ executable = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=str(application_icon),
 )

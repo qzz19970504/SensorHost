@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
 )
 
 from sensor_host.acquisition import UiSnapshot
+from sensor_host.branding import ORIENTATION_WAITING_MESSAGE
 from sensor_host.presentation.theme import COLORS
 from sensor_host.presentation.spacing import SPACE
 
@@ -150,7 +151,11 @@ class _FallbackCanvas(QWidget):
             )
         if not self._has_data:
             painter.setPen(QColor(COLORS["muted"]))
-            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "WAITING FOR JY61PL DATA")
+            painter.drawText(
+                self.rect(),
+                Qt.AlignmentFlag.AlignCenter,
+                ORIENTATION_WAITING_MESSAGE,
+            )
 
 
 class OrientationView(QFrame):

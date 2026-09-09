@@ -10,7 +10,7 @@ from pathlib import Path
 
 PROJECT_DISTRIBUTION = "stm32-sensor-host"
 SOURCE_VERSION = "0.1.0"
-ARTIFACT_PREFIX = "STM32SensorHost"
+ARTIFACT_PREFIX = "VibrationSensorHost"
 ARTIFACT_PLATFORM = "win64"
 MANIFEST_ENCODING = "utf-8"
 

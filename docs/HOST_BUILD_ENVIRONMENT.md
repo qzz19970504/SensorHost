@@ -10,6 +10,6 @@ The script uses `build/host-package/.venv`, tests only this repository, and buil
 Qt/OpenGL optional-module warnings may occur; successful exit requires the packaged
 EXE smoke test. No embedded build is invoked.
 
-Output is `dist/host/STM32SensorHost-<version>-win64.exe` and its JSON size/SHA-256
+Output is `dist/host/VibrationSensorHost-<version>-win64.exe` and its JSON size/SHA-256
 manifest. Bump `pyproject.toml` for a new release. Validate CDC and ESP hardware on
 release candidates; offscreen tests do not establish real Wi-Fi/hardware behavior.

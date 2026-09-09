@@ -11,6 +11,7 @@ from sensor_host.acquisition import (
     TransportKind,
     UiSnapshot,
 )
+from sensor_host import branding
 from sensor_host.presentation.controls import IntegratedComboBox
 from sensor_host.presentation.main_window import MainWindow
 from sensor_host.presentation.console_view import ConsoleView
@@ -310,7 +311,7 @@ def test_live_cards_use_article_style_titles_and_accents(qtbot) -> None:
 
     expected_titles = {
         "3-Axis Vibration",
-        "JY61PL Orientation",
+        "Orientation Sensor",
         "Attitude & Acceleration",
         "Stream Health",
     }
@@ -329,6 +330,22 @@ def test_live_cards_use_article_style_titles_and_accents(qtbot) -> None:
     assert len(title_accents) == len(expected_titles)
     assert all(accent.minimumWidth() == 3 for accent in title_accents)
     assert all(accent.minimumHeight() == 20 for accent in title_accents)
+
+
+def test_main_window_uses_generic_sensor_branding(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+    visible_text = {label.text() for label in window.findChildren(QLabel)}
+
+    assert window.windowTitle() == "Vibration Sensor Host"
+    assert "VIBRATION SENSOR DESKTOP" in visible_text
+    assert "VIBRATION SENSOR" in visible_text
+    assert "IIS3DWB" not in visible_text
+    assert "JY61PL Orientation" not in visible_text
+    assert (
+        getattr(branding, "ORIENTATION_WAITING_MESSAGE", None)
+        == "WAITING FOR ORIENTATION DATA"
+    )
 
 
 def test_acquisition_toolbar_is_flat_and_vertically_centered(qtbot) -> None:

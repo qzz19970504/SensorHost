@@ -6,8 +6,10 @@ import os
 import sys
 
 from PyQt6.QtCore import QSettings
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication
 
+from sensor_host.branding import APPLICATION_ICON_PATH, APPLICATION_NAME
 from sensor_host.presentation import (
     AppController,
     MainWindow,
@@ -52,7 +54,8 @@ def _create_application(arguments: list[str]) -> QApplication:
         if isinstance(existing_application, QApplication)
         else QApplication(arguments)
     )
-    application.setApplicationName("STM32 Sensor Host")
+    application.setApplicationName(APPLICATION_NAME)
+    application.setWindowIcon(QIcon(str(APPLICATION_ICON_PATH)))
     load_application_fonts()
     application.setStyleSheet(dark_stylesheet())
     return application

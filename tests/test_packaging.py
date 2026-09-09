@@ -1,14 +1,14 @@
 import json
 from pathlib import Path
 
-from sensor_host.app import main
+from sensor_host.app import _create_application, main
 from sensor_host.packaging import artifact_name, main as packaging_main, write_manifest
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_artifact_name_uses_project_version_and_platform() -> None:
-    assert artifact_name() == "STM32SensorHost-0.1.0-win64.exe"
+    assert artifact_name() == "VibrationSensorHost-0.1.0-win64.exe"
 
 
 def test_manifest_contains_filename_size_and_sha256(tmp_path) -> None:
@@ -41,6 +41,13 @@ def test_application_smoke_mode_constructs_window_without_event_loop(
     assert qapp.styleSheet() == original_stylesheet
 
 
+def test_application_uses_generic_name_and_project_icon(qapp) -> None:
+    application = _create_application(["vibration-sensor-host"])
+
+    assert application.applicationName() == "Vibration Sensor Host"
+    assert not application.windowIcon().isNull()
+
+
 def test_pyinstaller_recipe_is_windowed_onefile() -> None:
     recipe = (REPOSITORY_ROOT / "STM32SensorHost.spec").read_text(
         encoding="utf-8"
@@ -49,6 +56,14 @@ def test_pyinstaller_recipe_is_windowed_onefile() -> None:
     assert "console=False" in recipe
     assert "EXE(" in recipe
     assert "COLLECT(" not in recipe
+    assert "icon=str(application_icon)" in recipe
+
+
+def test_application_icon_assets_exist() -> None:
+    asset_root = REPOSITORY_ROOT / "src" / "sensor_host" / "assets"
+
+    assert (asset_root / "vibration_sensor_icon.png").is_file()
+    assert (asset_root / "vibration_sensor_icon.ico").is_file()
 
 
 def test_pyinstaller_recipe_excludes_foreign_system_icu() -> None:

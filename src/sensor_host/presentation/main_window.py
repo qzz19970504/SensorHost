@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import QSettings, QSignalBlocker, QTimer, Qt, pyqtSignal
-from PyQt6.QtGui import QCloseEvent, QShowEvent
+from PyQt6.QtGui import QCloseEvent, QIcon, QShowEvent
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -16,6 +16,13 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from sensor_host.branding import (
+    APPLICATION_BRAND,
+    APPLICATION_ICON_PATH,
+    APPLICATION_NAME,
+    ORIENTATION_SENSOR_LABEL,
+    VIBRATION_SENSOR_LABEL,
+)
 from sensor_host.presentation.native_chrome import apply_windows_title_bar
 from sensor_host.presentation.vibration_view import VibrationView
 from sensor_host.presentation.controls import IntegratedComboBox
@@ -118,7 +125,8 @@ class MainWindow(QMainWindow):
     def __init__(self, settings: QSettings | None = None) -> None:
         super().__init__()
         self._settings = settings
-        self.setWindowTitle("STM32 Sensor Host")
+        self.setWindowTitle(APPLICATION_NAME)
+        self.setWindowIcon(QIcon(str(APPLICATION_ICON_PATH)))
         self.resize(_DEFAULT_WINDOW_WIDTH, _DEFAULT_WINDOW_HEIGHT)
         self.setMinimumSize(960, 540)
         self._pending_livestream_target: str | None = None
@@ -462,7 +470,7 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, SPACE.tight, 0, SPACE.tight)
         layout.setSpacing(SPACE.compact)
         layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
-        brand = QLabel("STM32 SENSOR DESKTOP")
+        brand = QLabel(APPLICATION_BRAND)
         brand.setProperty("role", "eyebrow")
         layout.addWidget(brand)
         layout.addStretch(1)
@@ -506,7 +514,7 @@ class MainWindow(QMainWindow):
         )
         layout.setSpacing(SPACE.compact)
         layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
-        sensor_label = QLabel("IIS3DWB")
+        sensor_label = QLabel(VIBRATION_SENSOR_LABEL)
         sensor_label.setProperty("role", "eyebrow")
         rate_label = QLabel("26.667 kHz")
         rate_label.setProperty("role", "muted")
@@ -602,7 +610,7 @@ class MainWindow(QMainWindow):
 
         self.right_splitter = CapsuleSplitter(Qt.Orientation.Vertical)
         orientation_card, self.orientation_container_layout = _card(
-            "JY61PL Orientation"
+            ORIENTATION_SENSOR_LABEL
         )
         self.orientation_view = OrientationView()
         self.orientation_container_layout.addWidget(self.orientation_view, stretch=1)
