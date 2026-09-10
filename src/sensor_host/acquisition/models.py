@@ -27,6 +27,21 @@ class UiSnapshot:
     firmware_control_state: FirmwareControlState | None = None
 
 
+def empty_snapshot() -> UiSnapshot:
+    """Return the default no-data snapshot used to reset every live view."""
+    return UiSnapshot(
+        time_s=np.empty(0, dtype=np.float64),
+        x_g=np.empty(0, dtype=np.float64),
+        y_g=np.empty(0, dtype=np.float64),
+        z_g=np.empty(0, dtype=np.float64),
+        orientation=None,
+        orientation_age_s=None,
+        firmware_status=None,
+        parser_stats=ParserStats(),
+        sample_rate_hz=0.0,
+    )
+
+
 @dataclass(frozen=True)
 class AcquisitionHealth:
     """Summarize host-side ingest and recording health."""

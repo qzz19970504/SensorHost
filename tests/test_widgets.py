@@ -24,7 +24,7 @@ from sensor_host.presentation.connection_view import (
     NetworkInterfaceInfo,
     WifiConnectionPanel,
 )
-from sensor_host.protocol import FirmwareControlState, ParserStats
+from sensor_host.protocol import FirmwareControlState, Jy61plSample, ParserStats
 
 
 def make_snapshot(
@@ -982,3 +982,96 @@ def test_clear_canvas_works_while_paused_and_invalidates_cached_snapshot(qtbot):
     window.tabs.setCurrentWidget(window.live_tab)
     window.set_display_paused(False)
     assert window.vibration_view.x_curve.getData()[0] is None
+
+
+def populated_snapshot() -> UiSnapshot:
+    return UiSnapshot(
+        time_s=np.asarray([0.0, 1.0]),
+        x_g=np.asarray([0.1, 0.2]),
+        y_g=np.asarray([0.1, 0.2]),
+        z_g=np.asarray([0.1, 0.2]),
+        orientation=Jy61plSample(
+            raw=(0, 0, 16384, 2500, 100, -200, 300),
+            acceleration_g=(0.0, 0.0, 0.5),
+            temperature_c=25.0,
+            angles_deg=(1.0, 2.0, 3.0),
+        ),
+        orientation_age_s=0.1,
+        firmware_status=None,
+        parser_stats=ParserStats(crc_errors=4),
+        sample_rate_hz=1000.0,
+    )
+
+
+def test_left_splitter_separates_wifi_panel_and_devices_sidebar(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    assert window.left_splitter.orientation() == Qt.Orientation.Vertical
+    assert window.left_splitter.count() == 2
+    assert window.left_splitter.widget(0) is window.wifi_panel
+    assert window.left_splitter.widget(1) is window.node_sidebar
+
+
+def test_left_splitter_sizes_persist_and_reset(qtbot, tmp_path) -> None:
+    settings = QSettings(str(tmp_path / "ui.ini"), QSettings.Format.IniFormat)
+    window = MainWindow(settings=settings)
+    qtbot.addWidget(window)
+    window.show()
+    # Pin a size inside the offscreen work area (800x800) so _restore_layout
+    # never resizes the window and changes splitter geometry mid-test.
+    window.resize(960, 780)
+    # Both panels must be visible for meaningful splitter geometry.
+    window.transport_mode_combo.setCurrentText("WI-FI")
+    qtbot.wait(50)
+    window.left_splitter.setSizes([300, 600])
+    persisted_sizes = window.left_splitter.sizes()
+    window.save_layout()
+    settings.sync()
+    settings.beginGroup("ui")
+    assert [int(value) for value in settings.value("left_sizes", [], type=list)] == [
+        int(value) for value in persisted_sizes
+    ]
+    settings.endGroup()
+
+    window.left_splitter.setSizes([500, 200])
+    assert window.left_splitter.sizes() != persisted_sizes
+    window._restore_layout()
+    qtbot.wait(50)
+    assert window.left_splitter.sizes() == persisted_sizes
+
+    window._reset_layout()
+    settings.sync()
+    settings.beginGroup("ui")
+    assert settings.childKeys() == []
+    settings.endGroup()
+
+
+def test_clear_live_views_restores_default_dashboard(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.update_snapshot(populated_snapshot())
+    assert window.health_value_labels["crc_errors"].text() == "4"
+    assert window.attitude_view.value_labels["roll"].text() != "—"
+
+    window.clear_live_views()
+
+    assert window.health_value_labels["crc_errors"].text() == "0"
+    assert window.health_value_labels["sample_rate"].text() == "—"
+    assert window.attitude_view.value_labels["roll"].text() == "—"
+    assert window.orientation_view.status_label.text() == "WAITING"
+    assert window.vibration_view.rate_label.text() == "0 samples/s · 0 visible points"
+
+
+def test_clear_live_views_is_ignored_while_playback_owns_views(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.update_snapshot(populated_snapshot())
+    window.set_playback_active(True)
+
+    window.clear_live_views()
+
+    assert window.health_value_labels["sample_rate"].text() == "1,000"
+    window.exit_playback()
+    assert window.health_value_labels["sample_rate"].text() == "—"
+    assert window.playback_bar.isHidden()

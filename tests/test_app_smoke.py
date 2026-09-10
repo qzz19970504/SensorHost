@@ -769,3 +769,28 @@ def test_immediate_reconnect_ignores_previous_session_callbacks(qtbot):
         assert controller._selected_session() is current
     finally:
         controller.disconnect_device()
+
+
+def test_disconnect_emits_display_clear_requested(qtbot) -> None:
+    controller = AppController(RecordingIdleTransport)
+    controller.connect_device("FAKE")
+    try:
+        qtbot.waitUntil(lambda: controller.is_running, timeout=1000)
+        with qtbot.waitSignal(controller.display_clear_requested, timeout=2000):
+            controller.disconnect_device()
+    finally:
+        controller.disconnect_device()
+
+
+def test_last_gateway_death_clears_display_while_listener_stays_up(qtbot) -> None:
+    controller = AppController(RecordingIdleTransport)
+    clears: list[int] = []
+    controller.display_clear_requested.connect(lambda: clears.append(1))
+    controller.accept_gateway_client(
+        AcceptedGatewayClient("wifi-1", "peer-1", FailingReadTransport())  # type: ignore[arg-type]
+    )
+    try:
+        qtbot.waitUntil(lambda: bool(clears), timeout=2000)
+        assert not controller._sessions
+    finally:
+        controller.disconnect_device()

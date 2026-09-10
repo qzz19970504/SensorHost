@@ -36,6 +36,7 @@ _STATUS_INTERVAL_MS = 5_000
 _THREAD_STOP_TIMEOUT_MS = 3_000
 _MAXIMUM_WIFI_SESSIONS = 16
 _MAXIMUM_DISPLAY_POINTS = 5_000
+_IIS_SAMPLE_RATE_HZ = 26_667.0
 _SAFE_PATH_PATTERN = re.compile(r"[^A-Za-z0-9._-]+")
 
 
@@ -104,7 +105,28 @@ class _ManagedSession:
     recorder: RawSessionRecorder | None = None
     archive_recorder: RawSessionRecorder | None = None
     archive_start_revision: int = 0
+    archive_total_bytes: int = 0
+    archive_path: Path | None = None
     failure: str | None = None
+
+
+@dataclass(frozen=True)
+class SdRecordInfo:
+    """Describe one device's virtual SD ring record for the archive view."""
+
+    node_id: str
+    alias: str
+    uuid_suffix: str
+    transport: str
+    sd_ready: bool | None
+    sd_format_required: bool | None
+    used_bytes: int | None
+    capacity_bytes: int | None
+    retained_frames: int | None
+    retained_chunks: int | None
+    overwritten_frames: int | None
+    estimated_duration_s: float | None
+    export_phase: str | None
 
 
 class AppController(QObject):
@@ -119,6 +141,9 @@ class AppController(QObject):
     selected_node_changed = pyqtSignal(str)
     wifi_server_changed = pyqtSignal(bool, str)
     error_raised = pyqtSignal(str)
+    display_clear_requested = pyqtSignal()
+    export_started = pyqtSignal(str, str, int)
+    export_finished = pyqtSignal(str, str, str)
 
     def __init__(
         self,
@@ -352,6 +377,7 @@ class AppController(QObject):
         self._is_stopping = False
         self._emit_nodes()
         self.connection_changed.emit(False, "")
+        self.display_clear_requested.emit()
 
     @pyqtSlot(str)
     def select_node(self, node_id: str) -> None:
@@ -484,6 +510,108 @@ class AppController(QObject):
         session = self._selected_session()
         if session is not None:
             session.acquisition.request_livestream()
+
+    def sd_records(self) -> list[SdRecordInfo]:
+        """Return one virtual SD ring record per connected session."""
+        records: list[SdRecordInfo] = []
+        for session in self._sessions.values():
+            summary = self._session_index.summary(session.node_id)
+            state = session.store.snapshot(1.0, 2).firmware_control_state
+            retained_frames = None if state is None else state.sd_retained_frames
+            records.append(
+                SdRecordInfo(
+                    node_id=session.node_id,
+                    alias=summary.alias,
+                    uuid_suffix=(
+                        str(summary.device_uuid)[-8:]
+                        if summary.device_uuid is not None
+                        else "PENDING"
+                    ),
+                    transport=session.transport_kind.value,
+                    sd_ready=None if state is None else state.sd_ready,
+                    sd_format_required=(
+                        None if state is None else state.sd_format_required
+                    ),
+                    used_bytes=None if state is None else state.sd_used,
+                    capacity_bytes=None if state is None else state.sd_capacity,
+                    retained_frames=retained_frames,
+                    retained_chunks=(
+                        None if state is None else state.sd_retained_chunks
+                    ),
+                    overwritten_frames=(
+                        None if state is None else state.sd_overwritten_frames
+                    ),
+                    estimated_duration_s=(
+                        None
+                        if retained_frames is None
+                        else retained_frames / _IIS_SAMPLE_RATE_HZ
+                    ),
+                    export_phase=None if state is None else state.export_phase,
+                )
+            )
+        return records
+
+    def request_status_all(self) -> None:
+        """Queue a firmware status request on every connected session."""
+        for session in self._sessions.values():
+            session.acquisition.request_status()
+
+    def active_export_node(self) -> str | None:
+        """Return the node with an archive export currently recording."""
+        for session in self._sessions.values():
+            if session.archive_recorder is not None:
+                return session.node_id
+        return None
+
+    def start_export_for(self, node_id: str) -> None:
+        """Start one archive export on the node's own transport path."""
+        session = self._sessions.get(node_id)
+        if session is None:
+            self.error_raised.emit(f"unknown node: {node_id}")
+            return
+        if session.archive_recorder is not None:
+            self.error_raised.emit("an archive export is already active for this node")
+            return
+        state = session.store.snapshot(1.0, 2).firmware_control_state
+        if state is None or not state.sd_ready:
+            self.error_raised.emit(
+                "device SD is not ready; refresh status before exporting"
+            )
+            return
+        target = (
+            "CDC" if session.transport_kind is TransportKind.CDC else "UART"
+        )
+        try:
+            path = self._start_archive_recording(session)
+        except (OSError, RuntimeError, ValueError) as error:
+            self.error_raised.emit(str(error))
+            return
+        session.archive_total_bytes = state.sd_used or 0
+        session.archive_path = path
+        session.acquisition.enqueue_command(f"AT+EXPORT={target}")
+        self.export_started.emit(node_id, str(path), session.archive_total_bytes)
+
+    def cancel_export_for(self, node_id: str) -> None:
+        """Cancel the node's active export; firmware stops in EXPORT state."""
+        session = self._sessions.get(node_id)
+        if session is None:
+            self.error_raised.emit(f"unknown node: {node_id}")
+            return
+        if session.archive_recorder is None:
+            return
+        session.acquisition.enqueue_command("AT+STOP")
+
+    def export_status(self, node_id: str) -> tuple[bool, int, int, str | None]:
+        """Return (active, bytes_written, total_bytes, phase) for one node."""
+        session = self._sessions.get(node_id)
+        if session is None:
+            return (False, 0, 0, None)
+        state = session.store.snapshot(1.0, 2).firmware_control_state
+        phase = None if state is None else state.export_phase
+        recorder = session.archive_recorder
+        if recorder is None:
+            return (False, 0, session.archive_total_bytes, phase)
+        return (True, recorder.bytes_written, session.archive_total_bytes, phase)
 
     @pyqtSlot(bool)
     def set_display_paused(self, paused: bool) -> None:
@@ -618,6 +746,7 @@ class AppController(QObject):
                 self.wifi_server_changed.emit(True, self._wifi_server_label)
             else:
                 self.connection_changed.emit(False, "")
+            self.display_clear_requested.emit()
 
     def _selected_session(self) -> _ManagedSession | None:
         if self._selected_node_id is None:
@@ -671,7 +800,7 @@ class AppController(QObject):
             self.error_raised.emit(str(error))
         self._session_index.set_recording(session.node_id, False)
 
-    def _start_archive_recording(self, session: _ManagedSession) -> None:
+    def _start_archive_recording(self, session: _ManagedSession) -> Path:
         if session.archive_recorder is not None:
             raise RuntimeError("an archive export is already active for this node")
         summary = self._session_index.summary(session.node_id)
@@ -704,6 +833,7 @@ class AppController(QObject):
         state = session.store.snapshot(1.0, 2).firmware_control_state
         session.archive_start_revision = 0 if state is None else state.export_revision
         session.acquisition.set_archive_recorder(recorder)
+        return path
 
     def _finalize_completed_export(self, session: _ManagedSession) -> None:
         recorder = session.archive_recorder
@@ -727,9 +857,11 @@ class AppController(QObject):
         session.acquisition.set_archive_recorder(None)
         session.archive_recorder = None
         try:
-            recorder.stop()
+            summary = recorder.stop()
         except RuntimeError as error:
             self.error_raised.emit(str(error))
+            return
+        self.export_finished.emit(session.node_id, phase or "UNKNOWN", str(summary.path))
 
     def _finalize_session_recorders(self, session: _ManagedSession) -> None:
         recorder = session.recorder

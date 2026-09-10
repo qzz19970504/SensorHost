@@ -29,13 +29,21 @@ from sensor_host.presentation.controls import IntegratedComboBox
 from sensor_host.presentation.orientation_view import AttitudeView, OrientationView
 from sensor_host.presentation.console_view import ConsoleView
 from sensor_host.presentation.diagnostics_view import DiagnosticsView
+from sensor_host.presentation.archive_view import ArchiveView
+from sensor_host.presentation.playback_bar import PlaybackBar
 from sensor_host.presentation.spacing import SPACE
 from sensor_host.presentation.connection_view import (
     NetworkInterfaceInfo,
     NodeSidebar,
     WifiConnectionPanel,
 )
-from sensor_host.acquisition import AcquisitionHealth, ConnectionState, NodeSummary, UiSnapshot
+from sensor_host.acquisition import (
+    AcquisitionHealth,
+    ConnectionState,
+    NodeSummary,
+    UiSnapshot,
+    empty_snapshot,
+)
 from sensor_host.presentation.splitter import CapsuleSplitter
 
 
@@ -44,6 +52,9 @@ _DEFAULT_WINDOW_HEIGHT = 900
 _WORKSPACE_SPLIT_SIZES = (260, 1180)
 _MAIN_SPLIT_SIZES = (1000, 420)
 _RIGHT_SPLIT_SIZES = (500, 400)
+_LEFT_SPLIT_SIZES = (430, 470)
+_LEFT_WIFI_MINIMUM_HEIGHT = 150
+_LEFT_SIDEBAR_MINIMUM_HEIGHT = 180
 _CARD_TITLE_ACCENT_WIDTH = 3
 _CARD_TITLE_ACCENT_HEIGHT = 20
 _COMBO_MINIMUM_WIDTH = 72
@@ -56,6 +67,16 @@ _ERROR_HEALTH_KEYS = (
     "transport_drops",
     "physical_errors",
     "live_drops",
+)
+_HEALTH_FIELDS = (
+    ("sample_rate", "SAMPLES/S", "—"),
+    ("crc_errors", "CRC ERR", "0"),
+    ("sequence_gaps", "SEQ GAP", "0"),
+    ("source_drops", "SOURCE DROP", "0"),
+    ("transport_drops", "TRANSPORT DROP", "0"),
+    ("physical_errors", "LINK ERR", "0"),
+    ("live_drops", "LIVE DROP", "0"),
+    ("uptime", "UPTIME", "—"),
 )
 
 
@@ -132,6 +153,7 @@ class MainWindow(QMainWindow):
         self._pending_livestream_target: str | None = None
         self._connected = False
         self._node_available = False
+        self._playback_active = False
         self._latest_snapshot: UiSnapshot | None = None
 
         central_widget = QWidget()
@@ -159,16 +181,21 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.live_tab, "LIVE MONITOR")
         self.tabs.addTab(self.diagnostics_tab, "DIAGNOSTICS")
         self.tabs.addTab(self.console_tab, "CONSOLE")
+        self.archive_view = ArchiveView()
+        self.archive_tab = self._wrap_tab(self.archive_view)
+        self.tabs.addTab(self.archive_tab, "SD ARCHIVE")
         self.wifi_panel = WifiConnectionPanel()
         self.node_sidebar = NodeSidebar()
-        left_panel = QWidget()
-        left_layout = QVBoxLayout(left_panel)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(SPACE.normal)
-        left_layout.addWidget(self.wifi_panel)
-        left_layout.addWidget(self.node_sidebar, stretch=1)
+        self.wifi_panel.setMinimumHeight(_LEFT_WIFI_MINIMUM_HEIGHT)
+        self.node_sidebar.setMinimumHeight(_LEFT_SIDEBAR_MINIMUM_HEIGHT)
+        self.left_splitter = CapsuleSplitter(Qt.Orientation.Vertical)
+        self.left_splitter.addWidget(self.wifi_panel)
+        self.left_splitter.addWidget(self.node_sidebar)
+        self.left_splitter.setStretchFactor(0, 0)
+        self.left_splitter.setStretchFactor(1, 1)
+        self.left_splitter.setSizes(list(_LEFT_SPLIT_SIZES))
         self.workspace_splitter = CapsuleSplitter()
-        self.workspace_splitter.addWidget(left_panel)
+        self.workspace_splitter.addWidget(self.left_splitter)
         self.workspace_splitter.addWidget(self.tabs)
         self.workspace_splitter.setStretchFactor(0, 1)
         self.workspace_splitter.setStretchFactor(1, 5)
@@ -275,6 +302,7 @@ class MainWindow(QMainWindow):
             self._settings.remove("")
             self._settings.endGroup()
         self.workspace_splitter.setSizes(list(_WORKSPACE_SPLIT_SIZES))
+        self.left_splitter.setSizes(list(_LEFT_SPLIT_SIZES))
         self.main_splitter.setSizes(list(_MAIN_SPLIT_SIZES))
         self.right_splitter.setSizes(list(_RIGHT_SPLIT_SIZES))
         self.resize(_DEFAULT_WINDOW_WIDTH, _DEFAULT_WINDOW_HEIGHT)
@@ -309,6 +337,7 @@ class MainWindow(QMainWindow):
             self._settings.setValue(
                 "workspace_sizes", self.workspace_splitter.sizes()
             )
+            self._settings.setValue("left_sizes", self.left_splitter.sizes())
             self._settings.setValue("main_sizes", self.main_splitter.sizes())
             self._settings.setValue("right_sizes", self.right_splitter.sizes())
         finally:
@@ -323,6 +352,7 @@ class MainWindow(QMainWindow):
             width = self._settings.value("window_width", 0, type=int)
             height = self._settings.value("window_height", 0, type=int)
             workspace = self._settings.value("workspace_sizes", [], type=list)
+            left = self._settings.value("left_sizes", [], type=list)
             main = self._settings.value("main_sizes", [], type=list)
             right = self._settings.value("right_sizes", [], type=list)
         finally:
@@ -338,6 +368,7 @@ class MainWindow(QMainWindow):
             )
         for splitter, sizes in (
             (self.workspace_splitter, workspace),
+            (self.left_splitter, left),
             (self.main_splitter, main),
             (self.right_splitter, right),
         ):
@@ -391,6 +422,40 @@ class MainWindow(QMainWindow):
         self.set_connected(is_running)
         if is_running:
             self.connection_badge.setText(label)
+
+    def update_live_snapshot(self, snapshot: UiSnapshot) -> None:
+        """Apply live acquisition snapshots unless offline playback owns views."""
+        if self._playback_active:
+            return
+        self.update_snapshot(snapshot)
+
+    def set_playback_active(self, is_active: bool) -> None:
+        """Switch the live dashboard between live snapshots and file playback."""
+        self._playback_active = is_active
+        self.playback_bar.setVisible(is_active)
+        if is_active:
+            self.tabs.setCurrentWidget(self.live_tab)
+
+    def exit_playback(self) -> None:
+        """Leave playback mode and restore the default empty live views."""
+        if not self._playback_active:
+            return
+        self.set_playback_active(False)
+        self.clear_live_views()
+
+    def clear_live_views(self) -> None:
+        """Reset every live view to its default no-data state."""
+        if self._playback_active:
+            return
+        self._latest_snapshot = None
+        self.vibration_view.clear()
+        empty = empty_snapshot()
+        self.orientation_view.update_snapshot(empty)
+        self.attitude_view.update_snapshot(empty)
+        for key, _title, initial_value in _HEALTH_FIELDS:
+            label = self.health_value_labels[key]
+            label.setText(initial_value)
+            label.setToolTip("")
 
     def update_snapshot(self, snapshot: UiSnapshot) -> None:
         """Refresh only the visible page, caching the snapshot for tab returns."""
@@ -599,6 +664,10 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, SPACE.compact, 0, 0)
         layout.setSpacing(SPACE.normal)
 
+        self.playback_bar = PlaybackBar()
+        self.playback_bar.hide()
+        layout.addWidget(self.playback_bar)
+
         self.main_splitter = CapsuleSplitter()
         self.vibration_view = VibrationView()
         vibration_card, self.vibration_container_layout = _card(
@@ -640,16 +709,7 @@ class MainWindow(QMainWindow):
         self.health_metrics_layout.setSpacing(SPACE.compact)
         self.health_field_layouts: list[QVBoxLayout] = []
         self.health_value_labels: dict[str, QLabel] = {}
-        health_fields = (
-            ("sample_rate", "SAMPLES/S", "—"),
-            ("crc_errors", "CRC ERR", "0"),
-            ("sequence_gaps", "SEQ GAP", "0"),
-            ("source_drops", "SOURCE DROP", "0"),
-            ("transport_drops", "TRANSPORT DROP", "0"),
-            ("physical_errors", "LINK ERR", "0"),
-            ("live_drops", "LIVE DROP", "0"),
-            ("uptime", "UPTIME", "—"),
-        )
+        health_fields = _HEALTH_FIELDS
         for key, title, initial_value in health_fields:
             field = QFrame()
             field_layout = QVBoxLayout(field)

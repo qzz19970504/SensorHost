@@ -168,18 +168,40 @@ $env:SENSOR_HOST_DATA_DIR='D:\SensorData'
 ## 7. SD 历史数据导出
 
 历史导出与实时 RECORD 不同：RECORD 保存连接后收到的实时帧；EXPORT 从板卡
-SD 中读取历史 SDF1 数据。
+SD 中读取历史 SDF1 数据。固件 SD 为环形 spool：整卡只有一条滚动记录，没有
+独立文件，因此 `SD ARCHIVE` 页中每个在线节点显示一条“虚拟记录”（容量、
+已用字节、保留帧数、估算时长、已覆盖帧数），信息来自 `AT+STATE?`。
 
-1. 点击 `STOP` 并等待固件进入 IDLE。
-2. 确认左侧选中了目标节点，且节点 UUID 已获取。
-3. 打开 `CONSOLE`。
-4. CDC 导出输入 `AT+EXPORT=CDC` 并发送。
-5. 等待 `EXPORT_BEGIN`，完成时会收到
-   `EXPORT_END:CHUNKS=<n>,FRAMES=<n>`；空存档返回 `EXPORT_EMPTY`。
-6. 导出文件保存在默认数据目录的 `exports` 下。
+### 7.1 使用 SD ARCHIVE 页导出
+
+1. 点击 `STOP` 并等待固件进入 IDLE（导出期间不要 START 或拔线）。
+2. 打开 `SD ARCHIVE` 页，点击 `REFRESH` 获取各节点 SD 状态。
+3. 选中目标节点行，点击 `EXPORT SELECTED`；确认对话框会提醒：导出为
+   move 语义，导出成功后设备 SD 环数据被清空，本地文件成为唯一存档。
+4. `EXPORT PROGRESS` 卡显示进度、已收/总字节、速度与耗时；`CANCEL`
+   发送 `AT+STOP` 取消本次导出（已接收部分保留并标记 aborted）。
+5. 完成后收到 `EXPORT_END:CHUNKS=<n>,FRAMES=<n>`；空存档返回
+   `EXPORT_EMPTY`。文件保存在默认数据目录 `exports/<时间戳>/<节点>/` 下，
+   并出现在页下方的 `LOCAL EXPORT LIBRARY` 列表（文件名、导出时间、
+   大小、来源设备、状态）。
+
+CDC 连接走 `AT+EXPORT=CDC`，Wi‑Fi 节点走 `AT+EXPORT=UART`，由上位机按
+传输类型自动选择。仍可在 `CONSOLE` 手敲上述命令触发导出。
 
 导出期间不要 START 或拔线。连接中断会把本次导出标记为中止；重新导出允许
 最多重复一个 SD chunk，上位机按协议保存接收到的完整帧。
+
+### 7.2 离线回放
+
+1. 在 `LOCAL EXPORT LIBRARY` 选中一条状态为 complete 的记录，点击
+   `OPEN FOR PLAYBACK`（或双击行）；上位机后台建立时间索引后自动切到
+   `LIVE MONITOR` 并显示播放条。
+2. 播放条提供 `PLAY/PAUSE`、`STOP`、进度条拖动 Seek、当前/总时长以及
+   0.5×/1×/2×/4× 变速；回放复用实时 3‑Axis Vibration 波形与姿态视图，
+   按文件内采样率和时间顺序喂数。
+3. 回放期间实时快照不刷新界面；点击 `STOP` 退出回放并清空视图，实时
+   数据恢复显示。
+4. 播放到文件末尾自动暂停；在末端再按 `PLAY` 从头开始。
 
 ## 8. 安全停止和退出
 

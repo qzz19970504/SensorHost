@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
-from PyQt6.QtCore import QSettings
+from PyQt6.QtCore import QObject, QSettings, QThread, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication
 
@@ -16,12 +17,33 @@ from sensor_host.presentation import (
     dark_stylesheet,
     load_application_fonts,
 )
+from sensor_host.presentation.playback_controller import PlaybackController
+from sensor_host.storage import build_playback_index
 from sensor_host.transport import CdcSerialTransport
 from sensor_host.presentation.connection_view import discover_ipv4_interfaces
 
 
 SMOKE_TEST_ARGUMENT = "--smoke-test"
 OFFSCREEN_PLATFORM = "offscreen"
+
+
+class _IndexWorker(QObject):
+    """Build one playback index off the GUI thread."""
+
+    finished = pyqtSignal(object, object, str)
+
+    def __init__(self, path: Path) -> None:
+        super().__init__()
+        self._path = path
+
+    @pyqtSlot()
+    def run(self) -> None:
+        try:
+            index = build_playback_index(self._path)
+        except OSError as error:
+            self.finished.emit(self._path, None, str(error))
+            return
+        self.finished.emit(self._path, index, "")
 
 
 def _wire_acquisition_controls(
@@ -110,7 +132,7 @@ def _run_interactive(application: QApplication) -> int:
     )
     window.refresh_requested.connect(refresh_devices)
     window.console_view.command_submitted.connect(controller.send_command)
-    controller.snapshot_ready.connect(window.update_snapshot)
+    controller.snapshot_ready.connect(window.update_live_snapshot)
     controller.health_ready.connect(window.update_health)
     controller.cli_response.connect(window.console_view.append_response)
     controller.cli_response_from.connect(window.console_view.append_response_from)
@@ -121,15 +143,72 @@ def _run_interactive(application: QApplication) -> int:
     controller.wifi_server_changed.connect(window.set_wifi_server_state)
     controller.nodes_changed.connect(window.set_nodes)
     controller.selected_node_changed.connect(window.node_sidebar.set_selected_node)
+    controller.display_clear_requested.connect(window.clear_live_views)
     window.node_sidebar.node_selected.connect(controller.select_node)
     window.node_sidebar.alias_requested.connect(controller.set_alias)
     window.node_sidebar.remove_requested.connect(controller.remove_offline_node)
+    _wire_archive_and_playback(window, controller)
     application.aboutToQuit.connect(controller.disconnect_device)
     refresh_devices()
     window.wifi_panel.restore_settings(settings)
     _fit_window_to_available_geometry(window)
     window.show()
     return application.exec()
+
+
+def _wire_archive_and_playback(window: MainWindow, controller: AppController) -> None:
+    """Connect the SD archive view, export flow and offline playback source."""
+    playback = PlaybackController(
+        window_seconds_provider=lambda: float(window.window_combo.currentData() or 10.0),
+        parent=window,
+    )
+    bar = window.playback_bar
+    bar.play_toggled.connect(
+        lambda checked: playback.play() if checked else playback.pause()
+    )
+    bar.stop_requested.connect(playback.stop)
+    bar.stop_requested.connect(window.exit_playback)
+    bar.seek_requested.connect(playback.seek)
+    bar.speed_changed.connect(playback.set_speed)
+    playback.snapshot_ready.connect(window.update_snapshot)
+    playback.state_changed.connect(bar.set_state)
+
+    window.archive_view.export_requested.connect(controller.start_export_for)
+    window.archive_view.cancel_requested.connect(controller.cancel_export_for)
+    window.archive_view.refresh_requested.connect(controller.request_status_all)
+    controller.export_finished.connect(window.archive_view.on_export_finished)
+
+    index_threads: list[QThread] = []
+
+    def open_for_playback(path: Path) -> None:
+        window.archive_view.set_open_busy(True)
+        thread = QThread(window)
+        worker = _IndexWorker(path)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+
+        def finish(index_path: object, index: object, error: str) -> None:
+            window.archive_view.set_open_busy(False)
+            thread.quit()
+            if index is None:
+                window.show_error(f"indexing {Path(index_path).name} failed: {error}")
+                return
+            playback.load(Path(index_path), index)  # type: ignore[arg-type]
+            window.playback_bar.set_file_name(Path(index_path).name)
+            window.clear_live_views()
+            window.set_playback_active(True)
+
+        worker.finished.connect(finish)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(
+            lambda: index_threads.remove(thread) if thread in index_threads else None
+        )
+        index_threads.append(thread)
+        thread.start()
+
+    window.archive_view.open_requested.connect(open_for_playback)
+    window.archive_view.set_controller(controller)
 
 
 def main(argv: list[str] | None = None) -> int:

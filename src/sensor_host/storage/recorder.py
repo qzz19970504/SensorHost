@@ -56,6 +56,12 @@ class RawSessionRecorder:
         with self._lock:
             return self._failure
 
+    @property
+    def bytes_written(self) -> int:
+        """Return the number of bytes flushed by the writer so far."""
+        with self._lock:
+            return self._bytes_written
+
     def start(self, path: Path, metadata: dict[str, object]) -> None:
         """Open a new recording and start its writer thread."""
         with self._lock:

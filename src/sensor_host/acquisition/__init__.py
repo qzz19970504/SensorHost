@@ -1,7 +1,7 @@
 """Public acquisition state and storage interfaces."""
 
 from .controller import AcquisitionController, DeviceIdentityError
-from .models import AcquisitionHealth, ConnectionState, UiSnapshot
+from .models import AcquisitionHealth, ConnectionState, UiSnapshot, empty_snapshot
 from .sample_store import RealtimeSampleStore
 from .sessions import (
     DuplicateDeviceError,
@@ -23,4 +23,5 @@ __all__ = [
     "SessionCapacityError",
     "TransportKind",
     "UiSnapshot",
+    "empty_snapshot",
 ]
