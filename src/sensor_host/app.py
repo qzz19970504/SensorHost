@@ -163,6 +163,7 @@ def _wire_archive_and_playback(window: MainWindow, controller: AppController) ->
 
     window.archive_view.export_requested.connect(controller.start_export_for)
     window.archive_view.cancel_requested.connect(controller.cancel_export_for)
+    window.archive_view.clear_requested.connect(controller.clear_sd_for)
     window.archive_view.refresh_requested.connect(controller.request_status_all)
     controller.export_finished.connect(window.archive_view.on_export_finished)
 

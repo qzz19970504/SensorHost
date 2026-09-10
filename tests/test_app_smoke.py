@@ -8,6 +8,7 @@ from sensor_host import app as sensor_host_app
 from sensor_host.acquisition import ConnectionState, NodeSummary, TransportKind
 from sensor_host.presentation.app_controller import AppController
 from sensor_host.presentation.main_window import MainWindow
+from sensor_host.protocol import FirmwareControlState
 from sensor_host.transport import AcceptedGatewayClient
 from sensor_host.transport import WifiServerConfig
 
@@ -614,6 +615,88 @@ def test_second_archive_waits_for_its_own_terminal_event(qtbot, tmp_path, monkey
 
         assert controller._sessions["wifi-1"].archive_recorder is not None
         assert len(list((tmp_path / "host" / "exports").rglob("*.sdf1"))) == 2
+    finally:
+        controller.disconnect_device()
+
+
+def test_cancel_archive_finishes_after_stop_state_ack(
+    qtbot, tmp_path, monkeypatch
+) -> None:
+    from test_archive_library import DEVICE_UUID
+
+    monkeypatch.chdir(tmp_path)
+    transport = QueueTransport()
+    controller = AppController(lambda: transport)
+    finished: list[tuple] = []
+    controller.export_finished.connect(lambda *args: finished.append(args))
+    controller.accept_gateway_client(
+        AcceptedGatewayClient("wifi-1", "peer-1", transport)  # type: ignore[arg-type]
+    )
+    try:
+        session = controller._sessions["wifi-1"]
+        controller._session_index.bind_identity("wifi-1", DEVICE_UUID)
+        session.store.update_control_state(
+            FirmwareControlState(
+                acquisition_state="IDLE",
+                device_uuid=DEVICE_UUID,
+                sd_ready=True,
+                sd_used=64,
+                sd_capacity=1024,
+            )
+        )
+
+        controller.start_export_for("wifi-1")
+        qtbot.waitUntil(lambda: b"AT+EXPORT=UART" in transport.commands)
+        controller.cancel_export_for("wifi-1")
+        qtbot.waitUntil(
+            lambda: b"AT+STOP" in transport.commands
+            and transport.commands.count(b"AT+STATE?") >= 2
+        )
+        assert session.archive_recorder is not None
+
+        transport.chunks.put(encode_cli_frame("OK\r\n", sequence=2))
+        transport.chunks.put(
+            encode_cli_frame(
+                "+STATE:IDLE\r\n"
+                "+EXPORT:TARGET=NONE,CHUNK=0,FRAME=0\r\n"
+                "+SD:USED=64,CAPACITY=1024,PENDING_FRAMES=0,"
+                "RETAINED_CHUNKS=1,RETAINED_FRAMES=2,"
+                "OVERWRITTEN_CHUNKS=0,OVERWRITTEN_FRAMES=0,"
+                "READY=1,FORMAT_REQUIRED=0\r\n"
+                "OK\r\n",
+                sequence=3,
+            )
+        )
+        qtbot.waitUntil(lambda: session.archive_recorder is None, timeout=2000)
+
+        assert finished and finished[0][1] == "ABORTED"
+    finally:
+        controller.disconnect_device()
+
+
+def test_clear_sd_queues_confirmed_command_only_when_idle(qtbot) -> None:
+    transport = RecordingIdleTransport()
+    controller = AppController(lambda: transport)
+    controller.accept_gateway_client(
+        AcceptedGatewayClient("wifi-1", "peer-1", transport)  # type: ignore[arg-type]
+    )
+    try:
+        session = controller._sessions["wifi-1"]
+        session.store.update_control_state(
+            FirmwareControlState(acquisition_state="IDLE", sd_ready=True)
+        )
+
+        controller.clear_sd_for("wifi-1")
+        qtbot.waitUntil(lambda: b"AT+SDCLEAR=CONFIRM" in transport.commands)
+
+        session.store.update_control_state(
+            FirmwareControlState(acquisition_state="ACQUIRE", sd_ready=True)
+        )
+        command_count = transport.commands.count(b"AT+SDCLEAR=CONFIRM")
+        controller.clear_sd_for("wifi-1")
+        qtbot.wait(100)
+
+        assert transport.commands.count(b"AT+SDCLEAR=CONFIRM") == command_count
     finally:
         controller.disconnect_device()
 

@@ -1132,6 +1132,48 @@ def test_archive_view_shows_export_progress_and_completion(qtbot) -> None:
     assert "export-001.sdf1" in view.progress_hint_label.text()
 
 
+def test_archive_view_clear_sd_requires_confirmation_and_emits_selected_node(
+    qtbot, monkeypatch
+) -> None:
+    from sensor_host.presentation.app_controller import SdRecordInfo
+    from sensor_host.presentation.archive_view import ArchiveView
+
+    view = ArchiveView()
+    qtbot.addWidget(view)
+    view.set_records(
+        [
+            SdRecordInfo(
+                node_id="node-1",
+                alias="NODE",
+                uuid_suffix="12345678",
+                transport="UART",
+                sd_ready=True,
+                sd_format_required=False,
+                used_bytes=64,
+                capacity_bytes=1024,
+                retained_frames=2,
+                retained_chunks=1,
+                overwritten_frames=0,
+                estimated_duration_s=0.1,
+                export_phase=None,
+            )
+        ]
+    )
+    view.record_table.selectRow(0)
+    requested: list[str] = []
+    view.clear_requested.connect(requested.append)
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+
+    assert view.clear_button.text() == "CLEAR SD"
+    view.clear_button.click()
+
+    assert requested == ["node-1"]
+
+
 def test_archive_tab_uses_vertical_capsule_splitter(qtbot) -> None:
     window = MainWindow()
     qtbot.addWidget(window)

@@ -113,6 +113,7 @@ class _ManagedSession:
     archive_started_s: float = 0.0
     archive_target: str = ""
     archive_retries: int = 0
+    archive_cancel_requested: bool = False
     failure: str | None = None
 
 
@@ -602,6 +603,7 @@ class AppController(QObject):
         session.archive_path = path
         session.archive_target = target
         session.archive_retries = 0
+        session.archive_cancel_requested = False
         session.acquisition.enqueue_command(f"AT+EXPORT={target}")
         self.export_started.emit(node_id, str(path), session.archive_total_bytes)
 
@@ -613,7 +615,40 @@ class AppController(QObject):
             return
         if session.archive_recorder is None:
             return
-        session.acquisition.enqueue_command("AT+STOP")
+        if session.archive_cancel_requested:
+            return
+        session.archive_cancel_requested = True
+        session.acquisition.stop_acquisition()
+        # The firmware acknowledges EXPORT+STOP with a bare OK.  Follow it with
+        # a state query so the host can confirm IDLE/NONE before closing its
+        # local recorder.
+        session.acquisition.request_status()
+
+    def clear_sd_for(self, node_id: str) -> None:
+        """Clear one device's SD ring after the firmware state gate passes."""
+        session = self._sessions.get(node_id)
+        if session is None:
+            self.error_raised.emit(f"unknown node: {node_id}")
+            return
+        if session.archive_recorder is not None:
+            self.error_raised.emit("cancel the active export before clearing device SD")
+            return
+        state = session.store.snapshot(1.0, 2).firmware_control_state
+        if state is None:
+            self.error_raised.emit(
+                "refresh status before clearing device SD"
+            )
+            return
+        if state.acquisition_state not in {"IDLE", "ERROR"}:
+            self.error_raised.emit(
+                "device SD can only be cleared while IDLE or ERROR; "
+                f"current state is {state.acquisition_state}"
+            )
+            return
+        try:
+            session.acquisition.clear_sd()
+        except (RuntimeError, ValueError) as error:
+            self.error_raised.emit(str(error))
 
     def export_status(self, node_id: str) -> tuple[bool, int, int, str | None]:
         """Return (active, bytes_written, total_bytes, phase) for one node."""
@@ -861,7 +896,15 @@ class AppController(QObject):
         state = session.store.snapshot(1.0, 2).firmware_control_state
         phase = None if state is None else state.export_phase
         revision = 0 if state is None else state.export_revision
-        if (
+        cancel_confirmed = (
+            session.archive_cancel_requested
+            and state is not None
+            and state.acquisition_state == "IDLE"
+            and state.export_target == "NONE"
+        )
+        if cancel_confirmed:
+            phase = "ABORTED"
+        elif (
             phase not in {"EMPTY", "COMPLETE", "ABORTED"}
             or revision <= session.archive_start_revision
         ):
@@ -875,12 +918,14 @@ class AppController(QObject):
         )
         session.acquisition.set_archive_recorder(None)
         session.archive_recorder = None
+        explicitly_cancelled = cancel_confirmed
+        session.archive_cancel_requested = False
         try:
             summary = recorder.stop()
         except RuntimeError as error:
             self.error_raised.emit(str(error))
             return
-        if phase == "ABORTED" and summary.bytes_written == 0:
+        if phase == "ABORTED" and summary.bytes_written == 0 and not explicitly_cancelled:
             if session.archive_retries < _EXPORT_AUTO_RETRIES:
                 session.archive_retries += 1
                 self._retry_export_after_abort(session)
@@ -917,7 +962,11 @@ class AppController(QObject):
     def _watchdog_stalled_export(self, session: _ManagedSession) -> None:
         """Detach an export that never received a single archive frame."""
         recorder = session.archive_recorder
-        if recorder is None or recorder.bytes_written:
+        if (
+            recorder is None
+            or recorder.bytes_written
+            or session.archive_cancel_requested
+        ):
             return
         elapsed_s = time.monotonic() - session.archive_started_s
         if elapsed_s < _EXPORT_FIRST_BYTE_TIMEOUT_S:
