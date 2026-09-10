@@ -23,6 +23,9 @@ DIAGNOSTICS_SCREENSHOT = ROOT / "docs" / "ui-review-evidence" / "stage-5" / "nat
 CONSOLE_SCREENSHOT = ROOT / "docs" / "ui-review-evidence" / "stage-5" / "native-cdc-console.png"
 OVERVIEW_SCREENSHOT = ROOT / "docs" / "ui-review-evidence" / "stage-4" / "native-live-1440x900-scale1.5.png"
 FLOW_IMAGE = ASSET_DIR / "sensorhost_sd_export_flow.png"
+SD_ARCHIVE_SCREENSHOT = ASSET_DIR / "sensorhost_sd_archive_overview.png"
+SD_PROGRESS_SCREENSHOT = ASSET_DIR / "sensorhost_sd_export_progress.png"
+PLAYBACK_SCREENSHOT = ASSET_DIR / "sensorhost_playback_controls.png"
 
 BLACK = "000000"
 TEXT = "202A36"
@@ -324,10 +327,19 @@ def add_warning(doc: Document, text: str) -> None:
 
 
 def build_doc() -> None:
-    for path in (LIVE_SCREENSHOT, DIAGNOSTICS_SCREENSHOT, CONSOLE_SCREENSHOT, OVERVIEW_SCREENSHOT):
+    make_sd_flow_image()
+    for path in (
+        LIVE_SCREENSHOT,
+        DIAGNOSTICS_SCREENSHOT,
+        CONSOLE_SCREENSHOT,
+        OVERVIEW_SCREENSHOT,
+        FLOW_IMAGE,
+        SD_ARCHIVE_SCREENSHOT,
+        SD_PROGRESS_SCREENSHOT,
+        PLAYBACK_SCREENSHOT,
+    ):
         if not path.exists():
             raise FileNotFoundError(path)
-    make_sd_flow_image()
 
     doc = Document()
     style_document(doc)
@@ -439,31 +451,40 @@ def build_doc() -> None:
 
     add_heading(doc, "5 SD 卡导出和下载", 1)
     add_body(doc, "SD ARCHIVE 用于把设备 SD 卡中的历史数据导出到电脑。导出前必须先让设备处于 IDLE。")
-    add_picture(doc, FLOW_IMAGE, 6.65, "图 5  SD 历史数据导出与本地回放的方向")
+    add_picture(doc, SD_ARCHIVE_SCREENSHOT, 6.65, "图 5  SD ARCHIVE 页面：设备存档、导出按钮和本地导出库")
     add_step(doc, 1, "先停止采集。", "点击 STOP，等待 CONSOLE 返回 OK，并确认设备状态为 IDLE。")
     add_step(doc, 2, "打开 SD ARCHIVE。", "切换到 SD ARCHIVE 页面，点击 REFRESH 获取设备 SD 状态。")
     add_step(doc, 3, "选择并导出。", "选中目标设备行，点击 EXPORT SELECTED，并确认导出提示。")
     add_step(doc, 4, "查看进度。", "在 EXPORT PROGRESS 中查看已接收字节、速度和状态；导出期间不要 START 或拔线。")
     add_step(doc, 5, "确认本地文件。", "完成后文件会进入 LOCAL EXPORT LIBRARY，状态为 complete 的记录可以继续回放。")
     add_warning(doc, "导出成功后设备 SD 环形存档会被清空，本地文件成为唯一存档副本。当前版本不提供把电脑文件上传回 SD 卡的功能。")
-    doc.add_page_break()
 
-    # Page 6: playback and shutdown.
-    add_heading(doc, "6 打开导出文件回放", 1)
-    add_body(doc, "导出文件不需要重新连接设备即可回放。回放会复用 LIVE MONITOR 的波形和姿态显示。")
+    # Page 6: export progress and import/playback.
+    add_heading(doc, "6 查看导出进度", 1)
+    add_body(doc, "导出期间，EXPORT PROGRESS 会显示当前状态。正常完成后状态为 COMPLETE；如果中途取消或连接中断，记录会保留相应的中止状态。")
+    add_picture(doc, SD_PROGRESS_SCREENSHOT, 6.65, "图 6  导出进行中：查看进度并可取消本次导出")
+    add_bullet(doc, "EXPORT PROGRESS：查看接收字节、SD 分配空间、速度和耗时。")
+    add_bullet(doc, "CANCEL：需要中止时点击；已接收部分会保留并标记为 aborted。")
+    add_bullet(doc, "导出结束后回到 LOCAL EXPORT LIBRARY，优先选择状态为 complete 的文件回放。")
+
+    add_heading(doc, "7 导入导出文件并回放", 1)
+    add_body(doc, "这里的“导入”是把电脑上的导出文件打开到上位机进行回放，不会把文件写回设备 SD 卡。导出文件不需要重新连接设备即可回放。")
+    add_picture(doc, FLOW_IMAGE, 6.65, "图 7  SD 历史数据导出、导入上位机与回放的数据方向")
+    add_picture(doc, PLAYBACK_SCREENSHOT, 6.65, "图 8  回放状态：文件名、播放控制、进度和倍速")
     add_step(doc, 1, "选择文件。", "在 LOCAL EXPORT LIBRARY 中选中状态为 complete 的导出记录。")
     add_step(doc, 2, "打开回放。", "点击 OPEN FOR PLAYBACK，或双击记录行；等待文件索引完成。")
     add_step(doc, 3, "控制播放。", "使用 PLAY / PAUSE、STOP、进度条拖动和 0.5×、1×、2×、4× 速度。")
     add_step(doc, 4, "退出回放。", "点击播放条 STOP，返回实时监看；播放到末尾后再次 PLAY 会从头开始。")
 
-    add_heading(doc, "7 安全停止和退出", 1)
+    doc.add_page_break()
+    add_heading(doc, "8 安全停止和退出", 1)
     add_body(doc, "建议按以下顺序退出，避免记录文件没有正常收尾：")
     add_step(doc, 1, "停止 RECORD。", "如果 RECORD 正在运行，再次点击 RECORD 完成写盘。")
     add_step(doc, 2, "停止设备采集。", "点击 STOP，等待 CONSOLE 返回 OK。")
     add_step(doc, 3, "断开连接。", "点击 DISCONNECT，再关闭上位机。")
     add_warning(doc, "只关闭串口或直接退出程序不能替代 STOP；设备端可能仍保持采集状态或原来的实时目标。")
 
-    add_heading(doc, "8 两个常见提示", 1)
+    add_heading(doc, "9 两个常见提示", 1)
     add_bullet(doc, "已 CONNECTED 但无曲线：确认左侧选中了在线设备，LIVE TARGET=CDC，且已点击 START；再看 DIAGNOSTICS 的帧数是否增加。")
     add_bullet(doc, "选择 CDC 出现 ERROR:STATE：设备仍在采集或实时目标不是 CDC。按 STOP → 等待 IDLE / OK → 选择 CDC → START 的顺序重试。")
     add_bullet(doc, "不确定当前发生了什么：打开 CONSOLE 查看最近的 OK、ERROR、+STATE 和 EXPORT_* 回复。")

@@ -4,7 +4,7 @@
 
 **Goal:** Create and visually verify a concise Chinese DOCX operator guide for SensorHost using verified UI screenshots and beginner-oriented steps.
 
-**Architecture:** Build one self-contained DOCX from `python-docx`, using existing project screenshots as inline figures and one locally generated SD export flow diagram. Keep source content in the builder script so revisions are deterministic, then render the DOCX to PNGs and inspect every page.
+**Architecture:** Build one self-contained DOCX from `python-docx`, using existing project screenshots, three generated-but-real Qt UI captures for SD export/playback, and one locally generated SD export flow diagram. Keep source content in the builder script so revisions are deterministic, then render the DOCX to PNGs and inspect every page.
 
 **Tech Stack:** Bundled Python runtime, `python-docx`, Pillow, existing PNG screenshots, packaged `render_docx.py` and LibreOffice renderer.
 
@@ -19,20 +19,27 @@
 - Read: `docs/ui-review-evidence/stage-5/native-cdc-diagnostics.png`
 - Read: `docs/ui-review-evidence/stage-5/native-cdc-console.png`
 - Create: `docs/artifacts/sensorhost_sd_export_flow.png`
+- Create: `docs/artifacts/sensorhost_sd_archive_overview.png`
+- Create: `docs/artifacts/sensorhost_sd_export_progress.png`
+- Create: `docs/artifacts/sensorhost_playback_controls.png`
 
 - [ ] **Step 1: Create the SD flow image**
 
   Draw a compact 1600×420 PNG with four labeled stages in Chinese: `设备 SD 卡`, `EXPORT SELECTED`, `电脑本地导出文件`, and `OPEN FOR PLAYBACK`. Connect them left-to-right with arrows, and add a small bottom note: `当前版本不支持电脑文件上传回 SD 卡`.
 
-- [ ] **Step 2: Check the source facts**
+- [ ] **Step 2: Capture the SD UI states**
+
+  Run `tools/capture_sensorhost_archive_guide_screenshots.py` with the repository `.venv`, `QT_QPA_PLATFORM=offscreen`, and `PYTHONPATH=src`. Confirm the three PNGs show the SD archive list, an in-progress export with CANCEL, and the live monitor playback bar.
+
+- [ ] **Step 3: Check the source facts**
 
   Confirm the guide states `STOP` before export, `CONNECT` does not start acquisition, `LIVE TARGET=CDC` is needed for USB live data, and `RECORD` is separate from SD export.
 
-- [ ] **Step 3: Commit the design asset**
+- [ ] **Step 4: Commit the design assets**
 
   ```powershell
-  git add docs/artifacts/sensorhost_sd_export_flow.png
-  git commit -m "docs: add SensorHost SD export flow asset"
+  git add docs/artifacts/sensorhost_sd_export_flow.png docs/artifacts/sensorhost_sd_archive_overview.png docs/artifacts/sensorhost_sd_export_progress.png docs/artifacts/sensorhost_playback_controls.png
+  git commit -m "docs: add SensorHost SD export guide assets"
   ```
 
 ### Task 2: Author the DOCX
@@ -57,7 +64,7 @@
   & 'C:\Users\44575\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe' tools/build_sensorhost_user_guide.py
   ```
 
-  Expected: the DOCX exists and contains the seven planned sections and five images.
+  Expected: the DOCX exists and contains the expanded SD export/import/playback sections and eight images.
 
 ### Task 3: Render and inspect the deliverable
 

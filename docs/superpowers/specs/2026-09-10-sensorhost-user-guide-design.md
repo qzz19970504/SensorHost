@@ -7,7 +7,7 @@
 ## 读者与范围
 
 - 读者：需要使用 SensorHost 上位机查看 STM32F407 传感器数据的现场操作人员。
-- 输出：`docs/SensorHost上位机操作指南.docx`。
+- 输出：`docs/SensorHost上位机操作指南.docx`，页数以内容完整和图片清晰为准，不设固定页数上限。
 - 语气：短句、按按钮和界面区域说明，不展开协议、源码和完整故障诊断。
 - 范围：CDC 连接为主，补充 WI-FI 入口说明；覆盖 LIVE MONITOR、DIAGNOSTICS、CONSOLE、DEVICE SD RECORDS 和 LOCAL EXPORT LIBRARY 的基础用途。
 - 明确边界：当前上位机支持从设备 SD 卡导出到电脑并回放，不提供将本地文件上传回 SD 卡的界面入口。
@@ -19,8 +19,9 @@
 3. 连接设备：插入 USB、REFRESH、选择 CDC/COM 口、CONNECT、选择 LIVE TARGET=CDC、START；说明 CONNECT 只建立连接，不自动开始采集。
 4. 查看波形：进入 LIVE MONITOR，说明 X/Y/Z 三轴曲线、时间窗、AUTO Y、RESET VIEW、姿态卡片、PAUSE 和 Stream Health 的基础判断。
 5. 记录实时数据：RECORD 的开始/结束，说明它与 SD 导出不同，并给出默认保存位置。
-6. SD 卡导出和本地回放：STOP 后进入 SD ARCHIVE，REFRESH、选中设备、EXPORT SELECTED、查看进度、导出完成后在 LOCAL EXPORT LIBRARY 中 OPEN FOR PLAYBACK；用流程图说明数据方向。
-7. 停止与常见提示：RECORD → STOP → DISCONNECT；提供“已连接但无波形”和“选择 CDC 报 ERROR:STATE”的简短处理。
+6. SD 卡导出和下载：STOP 后进入 SD ARCHIVE，REFRESH、选中设备、EXPORT SELECTED、查看进度，并配 SD 页面和进度截图。
+7. 导入导出文件并回放：从 LOCAL EXPORT LIBRARY 选择 complete 文件，OPEN FOR PLAYBACK 或双击，说明播放条操作，并配本地回放截图和数据流向图；明确这里的导入是上位机打开本地文件，不是上传回 SD 卡。
+8. 停止与常见提示：RECORD → STOP → DISCONNECT；提供“已连接但无波形”和“选择 CDC 报 ERROR:STATE”的简短处理。
 
 ## 图片计划
 
@@ -29,6 +30,9 @@
 - 图 2：`docs/ui-review-evidence/stage-5/native-cdc-live.png`，用于说明 CDC 已连接、LIVE TARGET、START、三轴波形和 Stream Health。
 - 图 3：`docs/ui-review-evidence/stage-5/native-cdc-diagnostics.png`，说明 DIAGNOSTICS 用于看帧数、CRC 和设备状态。
 - 图 4：`docs/ui-review-evidence/stage-5/native-cdc-console.png`，说明 CONSOLE 用于看命令回复及 SD 导出状态。
+- 图 5：`docs/artifacts/sensorhost_sd_archive_overview.png`，说明 SD ARCHIVE 页面中的设备存档、本地导出库和操作按钮。
+- 图 6：`docs/artifacts/sensorhost_sd_export_progress.png`，说明 EXPORT PROGRESS 和 CANCEL。
+- 图 7：`docs/artifacts/sensorhost_playback_controls.png`，说明本地导出文件打开后的回放控制条。
 - SD 卡部分：制作一张低复杂度的黑白/青色流程图，表达“设备 SD 卡 → EXPORT SELECTED → 电脑本地导出文件 → OPEN FOR PLAYBACK”，并在旁边注明不支持反向上传。
 
 ## 版式
