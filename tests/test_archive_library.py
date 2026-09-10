@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from sensor_host.storage import archive_library
 from sensor_host.storage.archive_library import build_playback_index, scan_exports
 
 
@@ -124,6 +125,27 @@ def test_scan_exports_reads_sidecar_and_falls_back_without_it(tmp_path) -> None:
 
 def test_scan_exports_missing_root_is_empty(tmp_path) -> None:
     assert scan_exports(tmp_path / "does-not-exist") == []
+
+
+def test_delete_export_removes_archive_and_sidecar(tmp_path) -> None:
+    path = write_archive(tmp_path / "exports" / "export-001.sdf1")
+    sidecar = path.with_suffix(".json")
+    sidecar.write_text('{"status": "aborted"}', encoding="utf-8")
+
+    archive_library.delete_export(path)
+
+    assert not path.exists()
+    assert not sidecar.exists()
+
+
+def test_delete_export_rejects_non_archive_file(tmp_path) -> None:
+    path = tmp_path / "notes.txt"
+    path.write_text("keep me", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="SDF1 archive"):
+        archive_library.delete_export(path)
+
+    assert path.exists()
 
 
 def test_build_playback_index_counts_samples_and_duration(tmp_path) -> None:

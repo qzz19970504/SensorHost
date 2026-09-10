@@ -3,7 +3,7 @@ from dataclasses import replace
 import numpy as np
 import pytest
 from PyQt6.QtCore import QSettings, Qt
-from PyQt6.QtWidgets import QFrame, QLabel
+from PyQt6.QtWidgets import QFrame, QLabel, QMessageBox
 
 from sensor_host.acquisition import (
     AcquisitionHealth,
@@ -1140,6 +1140,61 @@ def test_archive_tab_uses_vertical_capsule_splitter(qtbot) -> None:
 
     assert splitter.orientation() == Qt.Orientation.Vertical
     assert splitter.count() == 3
+
+
+def test_archive_cards_cannot_shrink_below_their_contents(qtbot) -> None:
+    from sensor_host.presentation.archive_view import ArchiveView
+
+    view = ArchiveView()
+    qtbot.addWidget(view)
+    view.setStyleSheet(dark_stylesheet())
+    view.resize(900, 500)
+    view.show()
+    view.archive_splitter.setSizes([1, 1, 1])
+    qtbot.wait(20)
+
+    for index in range(view.archive_splitter.count()):
+        card = view.archive_splitter.widget(index)
+        assert card.height() >= card.minimumSizeHint().height()
+
+
+def test_archive_library_exposes_right_click_delete(qtbot) -> None:
+    from sensor_host.presentation.archive_view import ArchiveView
+
+    view = ArchiveView()
+    qtbot.addWidget(view)
+
+    assert (
+        view.library_table.contextMenuPolicy()
+        == Qt.ContextMenuPolicy.CustomContextMenu
+    )
+
+
+def test_archive_library_delete_confirmed_removes_selected_export(
+    qtbot, tmp_path, monkeypatch
+) -> None:
+    from sensor_host.presentation.archive_view import ArchiveView
+    from test_archive_library import write_archive
+
+    monkeypatch.setenv("SENSOR_HOST_DATA_DIR", str(tmp_path))
+    path = write_archive(tmp_path / "exports" / "export-001.sdf1")
+    sidecar = path.with_suffix(".json")
+    sidecar.write_text('{"status": "aborted"}', encoding="utf-8")
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+    view = ArchiveView()
+    qtbot.addWidget(view)
+    view.refresh_library()
+    view.library_table.selectRow(0)
+
+    view._delete_selected_export()
+
+    assert not path.exists()
+    assert not sidecar.exists()
+    assert view.library_table.rowCount() == 0
 
 
 def test_playback_bar_emits_seek_speed_and_play(qtbot) -> None:

@@ -6,13 +6,15 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from PyQt6.QtCore import QTimer, Qt, pyqtSignal
+from PyQt6.QtCore import QPoint, QTimer, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLayout,
+    QMenu,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -25,16 +27,12 @@ from PyQt6.QtWidgets import (
 from sensor_host.presentation.app_controller import AppController, SdRecordInfo
 from sensor_host.presentation.spacing import SPACE
 from sensor_host.presentation.splitter import CapsuleSplitter
-from sensor_host.storage import scan_exports
+from sensor_host.storage import delete_export, scan_exports
 
 
 _POLL_INTERVAL_MS = 500
 _SPEED_EMA_ALPHA = 0.35
 _ARCHIVE_SPLIT_SIZES = (380, 190, 330)
-_RECORDS_MINIMUM_HEIGHT = 170
-_PROGRESS_MINIMUM_HEIGHT = 150
-_LIBRARY_MINIMUM_HEIGHT = 150
-
 _RECORD_COLUMNS = (
     "NODE",
     "SD",
@@ -87,6 +85,7 @@ def _card(title: str, actions: QWidget | None = None) -> tuple[QFrame, QVBoxLayo
     frame = QFrame()
     frame.setProperty("card", True)
     layout = QVBoxLayout(frame)
+    layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
     layout.setContentsMargins(SPACE.section, SPACE.section, SPACE.section, SPACE.section)
     layout.setSpacing(SPACE.compact)
     header = QHBoxLayout()
@@ -136,15 +135,13 @@ class ArchiveView(QWidget):
         records_card = self._create_records_card()
         progress_card = self._create_progress_card()
         library_card = self._create_library_card()
-        records_card.setMinimumHeight(_RECORDS_MINIMUM_HEIGHT)
-        progress_card.setMinimumHeight(_PROGRESS_MINIMUM_HEIGHT)
-        library_card.setMinimumHeight(_LIBRARY_MINIMUM_HEIGHT)
         root.addWidget(records_card)
         root.addWidget(progress_card)
         root.addWidget(library_card)
         root.setStretchFactor(0, 3)
         root.setStretchFactor(1, 0)
         root.setStretchFactor(2, 3)
+        root.setChildrenCollapsible(False)
         root.setSizes(list(_ARCHIVE_SPLIT_SIZES))
         self.archive_splitter = root
         self._poll_timer = QTimer(self)
@@ -352,6 +349,12 @@ class ArchiveView(QWidget):
         self.library_table.setEditTriggers(
             QAbstractItemView.EditTrigger.NoEditTriggers
         )
+        self.library_table.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu
+        )
+        self.library_table.customContextMenuRequested.connect(
+            self._show_library_context_menu
+        )
         self.library_table.doubleClicked.connect(self._emit_open)
         layout.addWidget(self.library_table, stretch=1)
         return card
@@ -423,6 +426,38 @@ class ArchiveView(QWidget):
         path_text = self._selected_library_path()
         if path_text:
             self.open_requested.emit(Path(path_text))
+
+    def _show_library_context_menu(self, position: QPoint) -> None:
+        index = self.library_table.indexAt(position)
+        if index.isValid():
+            self.library_table.selectRow(index.row())
+        if self._selected_library_path() is None:
+            return
+        menu = QMenu(self.library_table)
+        delete_action = menu.addAction("DELETE SELECTED")
+        delete_action.triggered.connect(self._delete_selected_export)
+        menu.exec(self.library_table.viewport().mapToGlobal(position))
+
+    def _delete_selected_export(self) -> None:
+        path_text = self._selected_library_path()
+        if path_text is None:
+            return
+        path = Path(path_text)
+        answer = QMessageBox.question(
+            self,
+            "DELETE LOCAL EXPORT",
+            f"Delete {path.name} and its metadata? This cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            delete_export(path)
+        except (OSError, ValueError) as error:
+            QMessageBox.critical(self, "DELETE LOCAL EXPORT", str(error))
+            return
+        self.refresh_library()
 
     def _selected_record_node(self) -> str | None:
         row = self.record_table.currentRow()

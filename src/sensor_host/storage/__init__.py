@@ -4,6 +4,7 @@ from .archive_library import (
     ExportEntry,
     PlaybackIndex,
     build_playback_index,
+    delete_export,
     scan_exports,
 )
 from .recorder import RawSessionRecorder, RecordingSummary
@@ -15,6 +16,7 @@ __all__ = [
     "RawSessionRecorder",
     "RecordingSummary",
     "build_playback_index",
+    "delete_export",
     "replay_chunks",
     "scan_exports",
 ]

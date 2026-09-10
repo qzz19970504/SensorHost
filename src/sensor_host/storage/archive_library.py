@@ -92,6 +92,15 @@ def scan_exports(root: Path | None = None) -> list[ExportEntry]:
     return entries
 
 
+def delete_export(path: Path) -> None:
+    """Delete one SDF1 export and its optional JSON sidecar."""
+    archive_path = Path(path)
+    if archive_path.suffix.lower() != ".sdf1":
+        raise ValueError("selected file is not an SDF1 archive")
+    archive_path.unlink()
+    archive_path.with_suffix(".json").unlink(missing_ok=True)
+
+
 def _entry_for(path: Path) -> ExportEntry:
     metadata: dict[str, object] = {}
     sidecar = path.with_suffix(".json")
