@@ -871,6 +871,82 @@ def test_export_then_library_open_replays_end_to_end(qtbot, tmp_path) -> None:
         controller.disconnect_device()
 
 
+def test_export_rejected_while_acquiring(qtbot) -> None:
+    from test_archive_library import DEVICE_UUID
+
+    transport = QueueTransport()
+    controller = AppController(lambda: transport)
+    errors: list[str] = []
+    controller.error_raised.connect(errors.append)
+    controller.accept_gateway_client(
+        AcceptedGatewayClient("wifi-1", "peer-1", transport)  # type: ignore[arg-type]
+    )
+    try:
+        transport.chunks.put(encode_jy_frame(DEVICE_UUID, sequence=1))
+        qtbot.waitUntil(
+            lambda: controller._session_index.summary("wifi-1").device_uuid
+            is not None,
+            timeout=2000,
+        )
+        transport.chunks.put(
+            encode_cli_frame(
+                "+STATE:ACQUIRE\r\n"
+                "+SD:USED=64,CAPACITY=1024,PENDING_FRAMES=0,RETAINED_CHUNKS=1,"
+                "RETAINED_FRAMES=2,OVERWRITTEN_CHUNKS=0,OVERWRITTEN_FRAMES=0,"
+                "READY=1,FORMAT_REQUIRED=0\r\n"
+                "OK\r\n",
+                sequence=2,
+            )
+        )
+        qtbot.waitUntil(
+            lambda: controller.sd_records()
+            and controller.sd_records()[0].sd_ready is True,
+            timeout=2000,
+        )
+
+        controller.start_export_for("wifi-1")
+        qtbot.wait(100)
+
+        assert controller._sessions["wifi-1"].archive_recorder is None
+        assert b"AT+EXPORT=UART" not in transport.commands
+        assert any("stop acquisition" in message for message in errors)
+    finally:
+        controller.disconnect_device()
+
+
+def test_stalled_export_watchdog_detaches_recorder(qtbot) -> None:
+    from test_archive_library import DEVICE_UUID
+
+    transport = QueueTransport()
+    controller = AppController(lambda: transport)
+    errors: list[str] = []
+    controller.error_raised.connect(errors.append)
+    finished: list[tuple] = []
+    controller.export_finished.connect(lambda *args: finished.append(args))
+    controller.accept_gateway_client(
+        AcceptedGatewayClient("wifi-1", "peer-1", transport)  # type: ignore[arg-type]
+    )
+    try:
+        transport.chunks.put(encode_jy_frame(DEVICE_UUID, sequence=1))
+        qtbot.waitUntil(
+            lambda: controller._session_index.summary("wifi-1").device_uuid
+            is not None,
+            timeout=2000,
+        )
+        session = controller._sessions["wifi-1"]
+        controller._start_archive_recording(session)
+        assert session.archive_recorder is not None
+        session.archive_started_s -= 100.0
+
+        controller._watchdog_stalled_export(session)
+
+        assert session.archive_recorder is None
+        assert finished and finished[0][1] == "STALLED"
+        assert any("export stalled" in message for message in errors)
+    finally:
+        controller.disconnect_device()
+
+
 def test_open_export_enters_playback_and_stop_returns_to_live(qtbot, tmp_path) -> None:
     window = MainWindow()
     qtbot.addWidget(window)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime
 from pathlib import Path
 
 from PyQt6.QtCore import QTimer, Qt, pyqtSignal
@@ -23,11 +24,16 @@ from PyQt6.QtWidgets import (
 
 from sensor_host.presentation.app_controller import AppController, SdRecordInfo
 from sensor_host.presentation.spacing import SPACE
+from sensor_host.presentation.splitter import CapsuleSplitter
 from sensor_host.storage import scan_exports
 
 
 _POLL_INTERVAL_MS = 500
 _SPEED_EMA_ALPHA = 0.35
+_ARCHIVE_SPLIT_SIZES = (380, 190, 330)
+_RECORDS_MINIMUM_HEIGHT = 170
+_PROGRESS_MINIMUM_HEIGHT = 150
+_LIBRARY_MINIMUM_HEIGHT = 150
 
 _RECORD_COLUMNS = (
     "NODE",
@@ -38,7 +44,7 @@ _RECORD_COLUMNS = (
     "OVERWRITTEN",
     "EXPORT",
 )
-_LIBRARY_COLUMNS = ("FILE", "EXPORTED (UTC)", "SIZE", "DEVICE", "STATUS")
+_LIBRARY_COLUMNS = ("FILE", "EXPORTED (LOCAL)", "SIZE", "DEVICE", "STATUS")
 
 _MOVE_SEMANTICS_WARNING = (
     "Export uses the firmware move semantics: every retained chunk is reclaimed "
@@ -68,6 +74,15 @@ def _human_duration(seconds: float | None) -> str:
     return f"{int(minutes)}m{rest:04.1f}s"
 
 
+def _local_time_text(iso_utc: str) -> str:
+    """Render one stored UTC timestamp in the operator's local timezone."""
+    try:
+        parsed = datetime.fromisoformat(iso_utc)
+    except ValueError:
+        return iso_utc
+    return parsed.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+
+
 def _card(title: str, actions: QWidget | None = None) -> tuple[QFrame, QVBoxLayout]:
     frame = QFrame()
     frame.setProperty("card", True)
@@ -81,9 +96,20 @@ def _card(title: str, actions: QWidget | None = None) -> tuple[QFrame, QVBoxLayo
     header.addWidget(heading)
     header.addStretch(1)
     if actions is not None:
+        actions.setProperty("role", "card-actions")
         header.addWidget(actions, alignment=Qt.AlignmentFlag.AlignVCenter)
     layout.addLayout(header)
     return frame, layout
+
+
+def _centered_item(value: str, role_data: object = None) -> QTableWidgetItem:
+    item = QTableWidgetItem(value)
+    item.setTextAlignment(
+        Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
+    )
+    if role_data is not None:
+        item.setData(Qt.ItemDataRole.UserRole, role_data)
+    return item
 
 
 class ArchiveView(QWidget):
@@ -102,12 +128,25 @@ class ArchiveView(QWidget):
         self._last_bytes = 0
         self._last_bytes_ms = 0
         self._speed_bytes_per_s = 0.0
-        root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(SPACE.normal)
-        root.addWidget(self._create_records_card())
-        root.addWidget(self._create_progress_card())
-        root.addWidget(self._create_library_card(), stretch=1)
+        root = CapsuleSplitter(Qt.Orientation.Vertical)
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
+        root_layout.addWidget(root)
+        records_card = self._create_records_card()
+        progress_card = self._create_progress_card()
+        library_card = self._create_library_card()
+        records_card.setMinimumHeight(_RECORDS_MINIMUM_HEIGHT)
+        progress_card.setMinimumHeight(_PROGRESS_MINIMUM_HEIGHT)
+        library_card.setMinimumHeight(_LIBRARY_MINIMUM_HEIGHT)
+        root.addWidget(records_card)
+        root.addWidget(progress_card)
+        root.addWidget(library_card)
+        root.setStretchFactor(0, 3)
+        root.setStretchFactor(1, 0)
+        root.setStretchFactor(2, 3)
+        root.setSizes(list(_ARCHIVE_SPLIT_SIZES))
+        self.archive_splitter = root
         self._poll_timer = QTimer(self)
         self._poll_timer.setInterval(_POLL_INTERVAL_MS)
         self._poll_timer.timeout.connect(self.poll)
@@ -173,9 +212,10 @@ class ArchiveView(QWidget):
                 record.export_phase or "—",
             )
             for column, value in enumerate(values):
-                item = QTableWidgetItem(value)
-                if column == 0:
-                    item.setData(Qt.ItemDataRole.UserRole, record.node_id)
+                item = _centered_item(
+                    value,
+                    record.node_id if column == 0 else None,
+                )
                 self.record_table.setItem(row, column, item)
         if selected_node is not None:
             self._select_record_node(selected_node)
@@ -188,15 +228,16 @@ class ArchiveView(QWidget):
             device = entry.alias or (entry.uuid[:8] if entry.uuid else "—")
             values = (
                 entry.name,
-                entry.started_utc.replace("T", " ").replace("+00:00", "Z"),
+                _local_time_text(entry.started_utc),
                 _human_bytes(entry.bytes_written),
                 device,
                 entry.status,
             )
             for column, value in enumerate(values):
-                item = QTableWidgetItem(value)
-                if column == 0:
-                    item.setData(Qt.ItemDataRole.UserRole, str(entry.path))
+                item = _centered_item(
+                    value,
+                    str(entry.path) if column == 0 else None,
+                )
                 self.library_table.setItem(row, column, item)
 
     def on_export_finished(self, node_id: str, phase: str, path: str) -> None:

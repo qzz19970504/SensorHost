@@ -1129,3 +1129,13 @@ def test_archive_view_shows_export_progress_and_completion(qtbot) -> None:
     assert view.progress_status_label.text() == "STATUS COMPLETE"
     assert not view.cancel_button.isEnabled()
     assert "export-001.sdf1" in view.progress_hint_label.text()
+
+
+def test_archive_tab_uses_vertical_capsule_splitter(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    splitter = window.archive_view.archive_splitter
+
+    assert splitter.orientation() == Qt.Orientation.Vertical
+    assert splitter.count() == 3

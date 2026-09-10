@@ -57,6 +57,13 @@ def dark_stylesheet() -> str:
         border-bottom: 1px solid {COLORS['border']};
     }}
     QWidget[role="card-actions"] {{ background: transparent; }}
+    QTableWidget::item:selected {{
+        background: #3A4654;
+        color: {COLORS['text']};
+    }}
+    QTableWidget::item:selected:hover {{
+        background: #46525F;
+    }}
     QLabel[role="card-title"] {{
         background: transparent;
         color: {COLORS['text']};

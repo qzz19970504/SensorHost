@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -37,6 +38,7 @@ _THREAD_STOP_TIMEOUT_MS = 3_000
 _MAXIMUM_WIFI_SESSIONS = 16
 _MAXIMUM_DISPLAY_POINTS = 5_000
 _IIS_SAMPLE_RATE_HZ = 26_667.0
+_EXPORT_FIRST_BYTE_TIMEOUT_S = 10.0
 _SAFE_PATH_PATTERN = re.compile(r"[^A-Za-z0-9._-]+")
 
 
@@ -107,6 +109,7 @@ class _ManagedSession:
     archive_start_revision: int = 0
     archive_total_bytes: int = 0
     archive_path: Path | None = None
+    archive_started_s: float = 0.0
     failure: str | None = None
 
 
@@ -578,6 +581,12 @@ class AppController(QObject):
                 "device SD is not ready; refresh status before exporting"
             )
             return
+        if state.acquisition_state not in (None, "IDLE"):
+            self.error_raised.emit(
+                "stop acquisition before exporting; the firmware rejects "
+                f"export while {state.acquisition_state}"
+            )
+            return
         target = (
             "CDC" if session.transport_kind is TransportKind.CDC else "UART"
         )
@@ -673,6 +682,7 @@ class AppController(QObject):
                 for response in responses:
                     self.cli_response.emit(response)
             self._finalize_completed_export(session)
+            self._watchdog_stalled_export(session)
         self._publish_selected_session()
 
     def _publish_selected_session(self) -> None:
@@ -691,7 +701,10 @@ class AppController(QObject):
     @pyqtSlot()
     def _request_status(self) -> None:
         for session in self._sessions.values():
-            session.acquisition.request_status()
+            # Keep UART/CDC TX free for archive frames while an export runs;
+            # status replies would contend for the same transmit path.
+            if session.archive_recorder is None:
+                session.acquisition.request_status()
 
     def _consume_identity_updates(self, session: _ManagedSession) -> None:
         for device_uuid in session.acquisition.drain_identity_updates():
@@ -832,6 +845,7 @@ class AppController(QObject):
         session.archive_recorder = recorder
         state = session.store.snapshot(1.0, 2).firmware_control_state
         session.archive_start_revision = 0 if state is None else state.export_revision
+        session.archive_started_s = time.monotonic()
         session.acquisition.set_archive_recorder(recorder)
         return path
 
@@ -861,7 +875,41 @@ class AppController(QObject):
         except RuntimeError as error:
             self.error_raised.emit(str(error))
             return
+        if phase == "ABORTED" and summary.bytes_written == 0:
+            self.error_raised.emit(
+                "firmware aborted the export before transmitting any frame; "
+                "retry after STOP and inspect the CONSOLE EXPORT_* lines"
+            )
+        elif phase == "EMPTY":
+            self.error_raised.emit("device SD ring is empty; nothing to export")
         self.export_finished.emit(session.node_id, phase or "UNKNOWN", str(summary.path))
+
+    def _watchdog_stalled_export(self, session: _ManagedSession) -> None:
+        """Detach an export that never received a single archive frame."""
+        recorder = session.archive_recorder
+        if recorder is None or recorder.bytes_written:
+            return
+        elapsed_s = time.monotonic() - session.archive_started_s
+        if elapsed_s < _EXPORT_FIRST_BYTE_TIMEOUT_S:
+            return
+        state = session.store.snapshot(1.0, 2).firmware_control_state
+        phase = None if state is None else state.export_phase
+        if phase in {"COMPLETE", "EMPTY", "ABORTED"}:
+            return
+        session.acquisition.set_archive_recorder(None)
+        session.archive_recorder = None
+        try:
+            recorder.update_metadata({"status": "stalled"})
+            summary = recorder.stop()
+        except RuntimeError as error:
+            self.error_raised.emit(str(error))
+            return
+        self.error_raised.emit(
+            "export stalled: no archive bytes within "
+            f"{_EXPORT_FIRST_BYTE_TIMEOUT_S:.0f} s (firmware phase "
+            f"{phase or 'unknown'}); check CONSOLE for EXPORT_/ERROR lines"
+        )
+        self.export_finished.emit(session.node_id, "STALLED", str(summary.path))
 
     def _finalize_session_recorders(self, session: _ManagedSession) -> None:
         recorder = session.recorder
