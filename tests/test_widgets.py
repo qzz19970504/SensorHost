@@ -1088,3 +1088,44 @@ def test_live_snapshots_are_ignored_while_playback_active(qtbot) -> None:
     window.set_playback_active(False)
     window.update_live_snapshot(populated_snapshot())
     assert window.health_value_labels["sample_rate"].text() == "1,000"
+
+
+class _StubExportController:
+    def __init__(self) -> None:
+        self.node_id: str | None = "node-1"
+        self.status: tuple[bool, int, int, str | None] = (
+            True,
+            50,
+            100,
+            "IN_PROGRESS",
+        )
+
+    def sd_records(self) -> list:
+        return []
+
+    def active_export_node(self) -> str | None:
+        return self.node_id
+
+    def export_status(self, node_id: str) -> tuple[bool, int, int, str | None]:
+        return self.status
+
+
+def test_archive_view_shows_export_progress_and_completion(qtbot) -> None:
+    from sensor_host.presentation.archive_view import ArchiveView
+
+    view = ArchiveView()
+    qtbot.addWidget(view)
+    stub = _StubExportController()
+
+    view.set_controller(stub)
+
+    assert view.progress_status_label.text() == "STATUS IN_PROGRESS"
+    assert view.progress_bar.value() == 500
+    assert "50 B / 100 B" in view.progress_bytes_label.text()
+    assert view.cancel_button.isEnabled()
+
+    view.on_export_finished("node-1", "COMPLETE", "exports/export-001.sdf1")
+
+    assert view.progress_status_label.text() == "STATUS COMPLETE"
+    assert not view.cancel_button.isEnabled()
+    assert "export-001.sdf1" in view.progress_hint_label.text()
