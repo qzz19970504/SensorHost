@@ -18,10 +18,10 @@ ROOT = Path(__file__).resolve().parents[1]
 DOCX_PATH = ROOT / "docs" / "SensorHost上位机操作指南.docx"
 ASSET_DIR = ROOT / "docs" / "artifacts"
 
-LIVE_SCREENSHOT = ROOT / "docs" / "ui-review-evidence" / "stage-5" / "native-cdc-live.png"
-DIAGNOSTICS_SCREENSHOT = ROOT / "docs" / "ui-review-evidence" / "stage-5" / "native-cdc-diagnostics.png"
-CONSOLE_SCREENSHOT = ROOT / "docs" / "ui-review-evidence" / "stage-5" / "native-cdc-console.png"
-OVERVIEW_SCREENSHOT = ROOT / "docs" / "ui-review-evidence" / "stage-4" / "native-live-1440x900-scale1.5.png"
+LIVE_SCREENSHOT = ASSET_DIR / "sensorhost_wifi_live.png"
+DIAGNOSTICS_SCREENSHOT = ASSET_DIR / "sensorhost_wifi_diagnostics.png"
+CONSOLE_SCREENSHOT = ASSET_DIR / "sensorhost_wifi_console.png"
+OVERVIEW_SCREENSHOT = ASSET_DIR / "sensorhost_wifi_connection.png"
 FLOW_IMAGE = ASSET_DIR / "sensorhost_sd_export_flow.png"
 SD_ARCHIVE_SCREENSHOT = ASSET_DIR / "sensorhost_sd_archive_overview.png"
 SD_PROGRESS_SCREENSHOT = ASSET_DIR / "sensorhost_sd_export_progress.png"
@@ -278,8 +278,15 @@ def add_picture(doc: Document, path: Path, width: float, caption: str) -> None:
         set_run_font(run, size=9, color=MUTED)
 
 
-def add_heading(doc: Document, text: str, level: int = 1) -> None:
+def add_heading(
+    doc: Document,
+    text: str,
+    level: int = 1,
+    *,
+    page_break_before: bool = False,
+) -> None:
     p = doc.add_heading(text, level=level)
+    p.paragraph_format.page_break_before = page_break_before
     for run in p.runs:
         set_run_font(run, size=16 if level == 1 else 12.5, bold=True, color=BLACK)
 
@@ -352,33 +359,34 @@ def build_doc() -> None:
         set_run_font(run, size=25, bold=True, color=BLACK)
     subtitle = doc.add_paragraph()
     subtitle.paragraph_format.space_after = Pt(18)
-    run = subtitle.add_run("设备连接、实时波形查看与 SD 卡数据导出")
+    run = subtitle.add_run("Wi-Fi 连接、实时波形查看与 SD 卡数据导出")
     set_run_font(run, size=13, color=MUTED)
 
-    add_body(doc, "本指南面向第一次使用 SensorHost 的操作人员。按下面的顺序操作，即可完成设备连接、查看实时数据、保存记录，并把设备 SD 卡中的历史数据导出到电脑。")
+    add_body(doc, "本指南面向第一次使用 SensorHost 的现场操作人员，主线按 Wi-Fi 连接方式编写。按下面的顺序操作，即可完成网络连接、查看实时数据、保存记录，并把设备 SD 卡中的历史数据导出到电脑。")
     add_heading(doc, "最短上手路径", 1)
-    add_step(doc, 1, "连接设备。", "选择 CDC，刷新并选择 STM32 的 COM 口，点击 CONNECT。")
-    add_step(doc, 2, "开始采集。", "将 LIVE TARGET 设为 CDC，点击 START。")
-    add_step(doc, 3, "查看波形。", "在 LIVE MONITOR 中观察 X、Y、Z 三轴曲线和姿态数据。")
-    add_step(doc, 4, "需要保存时。", "点击 RECORD 保存实时数据；需要导出 SD 历史数据时，先 STOP，再进入 SD ARCHIVE。")
+    add_step(doc, 1, "准备网络。", "让电脑和每个 ESP 网关加入同一个手机热点，确认热点允许设备之间通信。")
+    add_step(doc, 2, "启动监听。", "选择 WI-FI，填写热点网卡、PC IPv4 和端口，点击 CONNECT，看到 LISTENING。")
+    add_step(doc, 3, "开始采集。", "在 DEVICES 中选中在线节点，将 LIVE TARGET 设为 UART，点击 START。")
+    add_step(doc, 4, "查看波形。", "在 LIVE MONITOR 中观察 X、Y、Z 三轴曲线和姿态数据。")
+    add_step(doc, 5, "保存或导出。", "点击 RECORD 保存实时数据；需要导出 SD 历史数据时，先 STOP，再进入 SD ARCHIVE。")
     add_heading(doc, "使用前准备", 1)
-    add_bullet(doc, "STM32 采集板已上电，USB 数据线已连接到电脑。")
-    add_bullet(doc, "Windows 设备管理器中能看到 USB 串行设备（COMx）。COM 号可能因电脑或 USB 插口变化。")
-    add_bullet(doc, "本指南以 CDC 为例；使用 WI-FI 时选择 WI-FI，并按页面填写网卡和 PC IPv4，确保电脑与设备在同一网络。")
-    add_warning(doc, "CONNECT 只建立连接和查询设备，不会自动 START。连接成功后没有波形时，通常还需要选择 LIVE TARGET=CDC 并点击 START。")
-    doc.add_page_break()
+    add_bullet(doc, "电脑已连接手机热点或现场 Wi-Fi；每个 ESP 网关也加入同一个网络。")
+    add_bullet(doc, "已知 ESP 固件中预设的 PC IPv4；上位机选择的热点网卡 IPv4 必须与它一致。")
+    add_bullet(doc, "默认 TCP 端口为 54321、UDP 唤醒端口为 12345；只有端口被修改时才需要改动。")
+    add_warning(doc, "Wi-Fi 模式下 CONNECT 启动的是电脑端监听，不会自动启动设备采集。看到节点在线后，还要选择 LIVE TARGET=UART 并点击 START。CDC 仅用于单机调试。")
 
     # Page 2: interface overview.
-    add_heading(doc, "1 界面总览", 1)
-    add_body(doc, "上位机按“连接、采集、设备、数据页面”分区。第一次使用时，先看懂这些区域，再按后面的步骤操作。")
-    add_picture(doc, OVERVIEW_SCREENSHOT, 6.65, "图 1  上位机主界面示例")
+    add_heading(doc, "1 界面总览", 1, page_break_before=True)
+    add_body(doc, "上位机按“连接、采集、设备、数据页面”分区。Wi-Fi 现场使用时，先配置左侧 WI-FI FIELD MODE，再从 DEVICES 选择要查看的节点。")
+    add_picture(doc, OVERVIEW_SCREENSHOT, 6.0, "图 1  Wi-Fi 模式连接配置界面")
     add_table(
         doc,
         ["功能区", "主要用途"],
         [
-            ["顶部连接区", "选择 CDC / WI-FI、选择设备或 COM 口、REFRESH、CONNECT / DISCONNECT。"],
+            ["顶部连接区", "选择 WI-FI 或调试用 CDC；Wi-Fi 时显示监听状态，使用 REFRESH、CONNECT / DISCONNECT。"],
+            ["WI-FI FIELD MODE", "选择手机热点网卡，填写 PC IPv4、TCP/UDP 端口和可选 ESP IPv4 目标。"],
             ["采集工具栏", "设置 WINDOW、FIFO WM、LIVE TARGET，使用 START、STOP、PAUSE、RECORD。"],
-            ["DEVICES", "查看已发现设备，点击设备行可切换当前目标；下方可保存设备别名。"],
+            ["DEVICES", "查看在线或离线节点、对端 IP 和状态；点击在线节点可切换当前目标。"],
             ["LIVE MONITOR", "查看 IIS3DWB 三轴振动曲线、JY61PL 姿态和 Stream Health。"],
             ["DIAGNOSTICS", "查看解析器、链路、固件和存储计数器。"],
             ["CONSOLE", "查看设备回复，必要时发送高级 AT 命令。"],
@@ -386,24 +394,22 @@ def build_doc() -> None:
         ],
         [1.65, 5.0],
     )
-    doc.add_page_break()
 
     # Page 3: connection.
-    add_heading(doc, "2 连接设备", 1)
-    add_body(doc, "下面以 USB CDC 连接 STM32 为例。连接后还要显式选择 CDC 实时目标并启动采集。")
-    add_picture(doc, LIVE_SCREENSHOT, 6.65, "图 2  CDC 连接成功并显示实时数据时的界面")
-    add_step(doc, 1, "插入 USB。", "给采集板上电，并用 USB 数据线连接电脑。")
-    add_step(doc, 2, "选择 CDC。", "在顶部连接区把通路选择为 CDC。")
-    add_step(doc, 3, "刷新端口。", "点击 REFRESH，在设备下拉框中选择 STM32 对应的 USB 串行设备（COMx）。")
-    add_step(doc, 4, "建立连接。", "点击 CONNECT。右侧状态显示 CONNECTED，左侧 DEVICES 列表出现设备。")
-    add_step(doc, 5, "选择实时目标。", "确认 LIVE TARGET 为 CDC。设备如果原来正在 UART 采集，请先 STOP，等待 IDLE / OK，再切换为 CDC。")
-    add_step(doc, 6, "开始采集。", "点击 START，等待 CONSOLE 返回 OK；随后 LIVE MONITOR 开始刷新。")
-    add_warning(doc, "如果找不到 COM 口，先点击 REFRESH，并在设备管理器确认实际 COM 号；不要固定假定一定是 COM6。")
-    doc.add_page_break()
+    add_heading(doc, "2 连接 Wi-Fi 设备", 1, page_break_before=True)
+    add_body(doc, "Wi-Fi 模式下，上位机在电脑端监听 TCP，ESP 网关主动连接上位机。监听建立后，可在 DEVICES 中同时查看多个网关节点。")
+    add_picture(doc, LIVE_SCREENSHOT, 6.65, "图 2  Wi-Fi 监听已启动并显示在线节点")
+    add_step(doc, 1, "准备同一网络。", "电脑和每个 ESP 网关加入同一个手机热点；关闭热点的客户端隔离，并允许 Windows 防火墙接收上位机 TCP 入站连接。")
+    add_step(doc, 2, "选择 WI-FI。", "在顶部通路下拉框选择 WI-FI，左侧显示 WI-FI FIELD MODE 配置区。")
+    add_step(doc, 3, "选择热点网卡。", "在 PHONE HOTSPOT INTERFACE 中选择手机热点对应的 IPv4 网卡，例如 192.168.43.100/24。")
+    add_step(doc, 4, "核对 PC IPv4。", "PC IPv4 PRESET IN ESP FIRMWARE 必须填写与所选网卡相同的地址；这不是随意填写的设备 IP。")
+    add_step(doc, 5, "核对端口。", "默认 TCP LISTEN PORT 为 54321、UDP WAKE PORT 为 12345；如 ESP 固件使用其他值，按固件配置填写。")
+    add_step(doc, 6, "启动监听。", "点击 CONNECT，右上角显示 LISTENING <PC IPv4>:<TCP 端口>。ESP 网关会主动连入；必要时可填写 OPTIONAL ESP IPv4 TARGETS 发送定向唤醒。")
+    add_step(doc, 7, "选择节点并采集。", "等待 DEVICES 出现在线节点，点击目标行；将 LIVE TARGET 设为 UART，点击 START，等待 CONSOLE 返回 OK。")
 
     # Page 4: waveform and health.
-    add_heading(doc, "3 查看波形和判断是否正常", 1)
-    add_body(doc, "采集开始后，LIVE MONITOR 是最常用页面。中间的大图是 IIS3DWB 三轴振动，右侧是 JY61PL 姿态和加速度。")
+    add_heading(doc, "3 查看波形和判断是否正常", 1, page_break_before=True)
+    add_body(doc, "采集开始后，LIVE MONITOR 是最常用页面。Wi-Fi 数据经过 ESP 网关转发到电脑；中间的大图是 IIS3DWB 三轴振动，右侧是 JY61PL 姿态和加速度。")
     add_heading(doc, "实时波形区", 2)
     add_bullet(doc, "X、Y、Z：分别显示三个方向的振动曲线；点击曲线按钮可隐藏或显示对应通道。")
     add_bullet(doc, "WINDOW：改变图表显示的时间范围，不影响后台记录文件。")
@@ -411,7 +417,7 @@ def build_doc() -> None:
     add_bullet(doc, "PAUSE：只暂停界面刷新，不停止设备采集，也不停止 RECORD；真正停止采集请点击 STOP。")
     add_heading(doc, "快速判断", 2)
     add_bullet(doc, "SAMPLES/S 持续为非零，曲线向左滚动。")
-    add_bullet(doc, "CRC ERR 为 0，SEQ GAP、LINK ERR 在稳定链路下不持续增加。")
+    add_bullet(doc, "CRC ERR 为 0，SEQ GAP、TRANSPORT DROP、LINK ERR 在稳定链路下不持续增加。")
     add_bullet(doc, "姿态数据更新频率比振动曲线低，短时间少量更新属于正常现象。")
     add_heading(doc, "诊断与命令回复", 2)
     add_body(doc, "遇到“已连接但没有波形”时，先看 DIAGNOSTICS 的帧数和错误计数，再看 CONSOLE 是否返回 ERROR。")
@@ -439,18 +445,17 @@ def build_doc() -> None:
         cp.add_run(caption)
         for run in cp.runs:
             set_run_font(run, size=8.3, color=MUTED)
-    doc.add_page_break()
 
     # Page 5: recording and SD export.
-    add_heading(doc, "4 记录实时数据", 1)
-    add_body(doc, "RECORD 保存的是上位机连接后收到的实时 SDF1 数据，和 SD 卡中的历史存档是两条不同的数据路径。")
+    add_heading(doc, "4 记录实时数据", 1, page_break_before=True)
+    add_body(doc, "RECORD 保存的是上位机通过 Wi-Fi 收到的实时 SDF1 数据，和设备 SD 卡中的历史存档是两条不同的数据路径。")
     add_step(doc, 1, "开始记录。", "设备已连接并有实时数据时，点击 RECORD。按钮保持选中状态，并显示当前记录会话数。")
     add_step(doc, 2, "继续操作。", "查看波形、改变 WINDOW 或 PAUSE 都不会停止后台记录。")
     add_step(doc, 3, "结束记录。", "再次点击 RECORD，等待文件写入完成。")
     add_body(doc, "Windows 默认保存位置：%LOCALAPPDATA%\\SensorHost\\recordings\\<批次>\\<设备>\\。")
 
     add_heading(doc, "5 SD 卡导出和下载", 1)
-    add_body(doc, "SD ARCHIVE 用于把设备 SD 卡中的历史数据导出到电脑。导出前必须先让设备处于 IDLE。")
+    add_body(doc, "SD ARCHIVE 用于把当前 Wi-Fi 节点设备 SD 卡中的历史数据导出到电脑。导出前必须先让设备处于 IDLE。")
     add_picture(doc, SD_ARCHIVE_SCREENSHOT, 6.65, "图 5  SD ARCHIVE 页面：设备存档、导出按钮和本地导出库")
     add_step(doc, 1, "先停止采集。", "点击 STOP，等待 CONSOLE 返回 OK，并确认设备状态为 IDLE。")
     add_step(doc, 2, "打开 SD ARCHIVE。", "切换到 SD ARCHIVE 页面，点击 REFRESH 获取设备 SD 状态。")
@@ -463,7 +468,7 @@ def build_doc() -> None:
     add_heading(doc, "6 查看导出进度", 1)
     add_body(doc, "导出期间，EXPORT PROGRESS 会显示当前状态。正常完成后状态为 COMPLETE；如果中途取消或连接中断，记录会保留相应的中止状态。")
     add_picture(doc, SD_PROGRESS_SCREENSHOT, 6.65, "图 6  导出进行中：查看进度并可取消本次导出")
-    add_bullet(doc, "EXPORT PROGRESS：查看接收字节、SD 分配空间、速度和耗时。")
+    add_bullet(doc, "EXPORT PROGRESS：查看接收字节、SD 分配空间、速度和耗时；Wi-Fi 导出时数据由当前节点经网关传回电脑。")
     add_bullet(doc, "CANCEL：需要中止时点击；已接收部分会保留并标记为 aborted。")
     add_bullet(doc, "导出结束后回到 LOCAL EXPORT LIBRARY，优先选择状态为 complete 的文件回放。")
 
@@ -476,23 +481,23 @@ def build_doc() -> None:
     add_step(doc, 3, "控制播放。", "使用 PLAY / PAUSE、STOP、进度条拖动和 0.5×、1×、2×、4× 速度。")
     add_step(doc, 4, "退出回放。", "点击播放条 STOP，返回实时监看；播放到末尾后再次 PLAY 会从头开始。")
 
-    doc.add_page_break()
-    add_heading(doc, "8 安全停止和退出", 1)
+    add_heading(doc, "8 安全停止和退出", 1, page_break_before=True)
     add_body(doc, "建议按以下顺序退出，避免记录文件没有正常收尾：")
     add_step(doc, 1, "停止 RECORD。", "如果 RECORD 正在运行，再次点击 RECORD 完成写盘。")
     add_step(doc, 2, "停止设备采集。", "点击 STOP，等待 CONSOLE 返回 OK。")
     add_step(doc, 3, "断开连接。", "点击 DISCONNECT，再关闭上位机。")
     add_warning(doc, "只关闭串口或直接退出程序不能替代 STOP；设备端可能仍保持采集状态或原来的实时目标。")
 
-    add_heading(doc, "9 两个常见提示", 1)
-    add_bullet(doc, "已 CONNECTED 但无曲线：确认左侧选中了在线设备，LIVE TARGET=CDC，且已点击 START；再看 DIAGNOSTICS 的帧数是否增加。")
-    add_bullet(doc, "选择 CDC 出现 ERROR:STATE：设备仍在采集或实时目标不是 CDC。按 STOP → 等待 IDLE / OK → 选择 CDC → START 的顺序重试。")
+    add_heading(doc, "9 常见提示", 1)
+    add_bullet(doc, "监听已启动但没有节点：确认电脑和 ESP 在同一热点、PC IPv4 与 ESP 固件预设值一致、热点未启用客户端隔离，并允许 TCP 入站；必要时在 OPTIONAL ESP IPv4 TARGETS 填写地址后重试。")
+    add_bullet(doc, "节点已在线但无曲线：确认选中了在线节点，LIVE TARGET=UART，且已点击 START；再看 DIAGNOSTICS 的帧数、UART ERR 和 TRANSPORT DROP 是否增加。")
+    add_bullet(doc, "CDC 调试出现 ERROR:STATE：仅在 USB 调试时按 STOP → 等待 IDLE / OK → 选择 CDC → START 的顺序重试。")
     add_bullet(doc, "不确定当前发生了什么：打开 CONSOLE 查看最近的 OK、ERROR、+STATE 和 EXPORT_* 回复。")
 
     # Set document core properties without personal author data.
     props = doc.core_properties
     props.title = "SensorHost 上位机操作指南"
-    props.subject = "设备连接、实时波形查看与 SD 卡数据导出"
+    props.subject = "Wi-Fi 设备连接、实时波形查看与 SD 卡数据导出"
     props.author = ""
     props.last_modified_by = ""
     props.comments = ""

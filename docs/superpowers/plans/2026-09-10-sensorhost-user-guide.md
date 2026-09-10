@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Create and visually verify a concise Chinese DOCX operator guide for SensorHost using verified UI screenshots and beginner-oriented steps.
+**Goal:** Create and visually verify a concise Chinese DOCX operator guide for SensorHost using verified Wi-Fi UI screenshots and beginner-oriented steps; keep CDC as a short debug note.
 
-**Architecture:** Build one self-contained DOCX from `python-docx`, using existing project screenshots, three generated-but-real Qt UI captures for SD export/playback, and one locally generated SD export flow diagram. Keep source content in the builder script so revisions are deterministic, then render the DOCX to PNGs and inspect every page.
+**Architecture:** Build one self-contained DOCX from `python-docx`, using generated-but-real Qt UI captures in Wi-Fi mode for connection, live monitor, diagnostics, console, SD export and playback, plus one locally generated SD export flow diagram. Keep source content in the builder script so revisions are deterministic, then render the DOCX to PNGs and inspect every page.
 
 **Tech Stack:** Bundled Python runtime, `python-docx`, Pillow, existing PNG screenshots, packaged `render_docx.py` and LibreOffice renderer.
 
@@ -14,10 +14,10 @@
 
 **Files:**
 - Read: `docs/USER_MANUAL_zh-CN.md`
-- Read: `docs/ui-review-evidence/stage-4/native-live-1440x900-scale1.5.png`
-- Read: `docs/ui-review-evidence/stage-5/native-cdc-live.png`
-- Read: `docs/ui-review-evidence/stage-5/native-cdc-diagnostics.png`
-- Read: `docs/ui-review-evidence/stage-5/native-cdc-console.png`
+- Create: `docs/artifacts/sensorhost_wifi_connection.png`
+- Create: `docs/artifacts/sensorhost_wifi_live.png`
+- Create: `docs/artifacts/sensorhost_wifi_diagnostics.png`
+- Create: `docs/artifacts/sensorhost_wifi_console.png`
 - Create: `docs/artifacts/sensorhost_sd_export_flow.png`
 - Create: `docs/artifacts/sensorhost_sd_archive_overview.png`
 - Create: `docs/artifacts/sensorhost_sd_export_progress.png`
@@ -33,7 +33,7 @@
 
 - [ ] **Step 3: Check the source facts**
 
-  Confirm the guide states `STOP` before export, `CONNECT` does not start acquisition, `LIVE TARGET=CDC` is needed for USB live data, and `RECORD` is separate from SD export.
+  Confirm the guide states the Wi-Fi listener setup, `CONNECT` does not start acquisition, `LIVE TARGET=UART` is used through the Wi-Fi gateway, `STOP` is required before export, and `RECORD` is separate from SD export.
 
 - [ ] **Step 4: Commit the design assets**
 
@@ -101,7 +101,7 @@
 
 - [ ] **Step 1: Confirm the requested capabilities are present**
 
-  Confirm the final guide covers interface zones, CDC connection, waveform viewing, RECORD, SD export/download, local playback, and the explicit no-upload boundary.
+  Confirm the final guide covers interface zones, Wi-Fi connection, waveform viewing, RECORD, SD export/download, local playback, the short CDC debug note, and the explicit no-upload boundary.
 
 - [ ] **Step 2: Commit the guide source and artifact**
 

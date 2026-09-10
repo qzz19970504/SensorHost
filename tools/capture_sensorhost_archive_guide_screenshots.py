@@ -9,10 +9,18 @@ from uuid import UUID
 import numpy as np
 from PyQt6.QtWidgets import QApplication
 
-from sensor_host.acquisition import ConnectionState, NodeSummary, TransportKind, empty_snapshot
+from sensor_host.acquisition import (
+    AcquisitionHealth,
+    ConnectionState,
+    NodeSummary,
+    TransportKind,
+    empty_snapshot,
+)
 from sensor_host.presentation.app_controller import SdRecordInfo
+from sensor_host.presentation.connection_view import NetworkInterfaceInfo
 from sensor_host.presentation.main_window import MainWindow
 from sensor_host.presentation.theme import dark_stylesheet, load_application_fonts
+from sensor_host.protocol import FirmwareControlState, Jy61plSample, ParserStats, StatusV1
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,6 +28,8 @@ OUTPUT_DIR = ROOT / "docs" / "artifacts"
 CAPTURE_DATA = ROOT / "build" / "guide_capture_data"
 DEVICE_UUID = UUID("49005000-0e50-8731-9432-39203731a4f8")
 NODE_ID = "guide-node-1"
+LOCAL_IPV4 = "192.168.43.100"
+ESP_IPV4 = "192.168.43.20"
 
 
 def prepare_local_export() -> Path:
@@ -33,7 +43,7 @@ def prepare_local_export() -> Path:
         "ended_utc": "2026-09-11T08:33:18+00:00",
         "bytes_written": 1843200,
         "status": "complete",
-        "alias": "Node 49005000",
+        "alias": "Field Node A",
         "uuid": str(DEVICE_UUID),
     }
     archive.with_suffix(".json").write_text(
@@ -45,20 +55,20 @@ def prepare_local_export() -> Path:
 def build_node() -> NodeSummary:
     return NodeSummary(
         node_id=NODE_ID,
-        transport_kind=TransportKind.CDC,
-        peer="COM6",
-        connection_state=ConnectionState.CONNECTED,
+        transport_kind=TransportKind.WIFI,
+        peer=ESP_IPV4,
+        connection_state=ConnectionState.STREAMING,
         device_uuid=DEVICE_UUID,
-        alias="Node 49005000",
+        alias="Field Node A",
     )
 
 
 def build_record(phase: str | None = None) -> SdRecordInfo:
     return SdRecordInfo(
         node_id=NODE_ID,
-        alias="Node 49005000",
+        alias="Field Node A",
         uuid_suffix="3731a4f8",
-        transport="cdc",
+        transport="wifi",
         sd_ready=True,
         sd_format_required=False,
         used_bytes=124776448,
@@ -71,20 +81,133 @@ def build_record(phase: str | None = None) -> SdRecordInfo:
     )
 
 
+def build_snapshot():
+    time_s = np.linspace(-10.0, 0.0, 2000)
+    empty = empty_snapshot()
+    return replace(
+        empty,
+        time_s=time_s,
+        x_g=0.08 * np.sin(time_s * 20.0),
+        y_g=0.12 * np.sin(time_s * 16.0 + 1.0),
+        z_g=1.0 + 0.05 * np.sin(time_s * 12.0),
+        orientation=Jy61plSample(
+            raw=(0, 0, 0, 0, 0, 0, 0),
+            acceleration_g=(0.02, -0.01, 1.00),
+            temperature_c=26.4,
+            angles_deg=(1.2, -0.6, 42.5),
+        ),
+        orientation_age_s=0.08,
+        firmware_status=StatusV1(
+            status_version=1,
+            active_transport=1,
+            pending_transport=1,
+            acquisition_state=1,
+            watermark_words=256,
+            free_data_buffers=5,
+            uart_credit_bytes=0,
+            data_queue_peak=12,
+            fifo_overruns=0,
+            source_drops=0,
+            transport_drops=0,
+            spi_dma_errors=0,
+            uart_dma_errors=0,
+            cdc_errors=0,
+            command_errors=0,
+            iis_stack_high_water_words=120,
+            transport_stack_high_water_words=96,
+            control_stack_high_water_words=80,
+            jy61pl_stack_high_water_words=88,
+            led_stack_high_water_words=40,
+            uptime_us=184_200_000,
+        ),
+        parser_stats=ParserStats(
+            frames=123456,
+            crc_errors=0,
+            sequence_gaps=0,
+        ),
+        sample_rate_hz=26_667.0,
+        firmware_control_state=FirmwareControlState(
+            acquisition_state="ACQUIRE",
+            uart_baud=921600,
+            device_uuid=DEVICE_UUID,
+            uuid_source="FLASH",
+            sd_used=124_776_448,
+            sd_capacity=124_776_448,
+            sd_pending_frames=0,
+            sd_retained_chunks=30463,
+            sd_retained_frames=33329,
+            sd_overwritten_chunks=2812,
+            sd_overwritten_frames=2812119,
+            sd_ready=True,
+            sd_format_required=False,
+            livestream_target="UART",
+            live_drops_iis=0,
+            live_drops_jy=0,
+            live_last_routed_sequence=123455,
+            live_last_completed_sequence=123454,
+        ),
+    )
+
+
 def setup_window(app: QApplication) -> MainWindow:
     window = MainWindow()
     window.resize(1440, 900)
-    window.set_devices([("COM6", "COM6 — STM32 Virtual COM Port")])
-    window.transport_mode_combo.setCurrentText("CDC")
-    window.live_target_combo.setCurrentText("CDC")
-    window.set_nodes([build_node()])
-    window.set_connected(True)
-    window.workspace_splitter.setSizes([260, 1180])
+    window.set_network_interfaces(
+        [NetworkInterfaceInfo("Mobile Hotspot", LOCAL_IPV4, "255.255.255.0")]
+    )
+    window.transport_mode_combo.setCurrentText("WI-FI")
+    window.wifi_panel.expected_ipv4_edit.setText(LOCAL_IPV4)
+    window.wifi_panel.tcp_port_spin.setValue(54321)
+    window.wifi_panel.udp_port_spin.setValue(12345)
+    window.wifi_panel.wake_targets_edit.setText(ESP_IPV4)
+    window.live_target_combo.setCurrentText("UART")
+    window.workspace_splitter.setSizes([315, 1125])
     return window
+
+
+def capture_wifi_screens(window: MainWindow) -> None:
+    window.set_nodes([])
+    window.set_wifi_server_state(False, "DISCONNECTED")
+    window.tabs.setCurrentWidget(window.live_tab)
+    window.left_splitter.setSizes([520, 170])
+    window.show()
+    QApplication.processEvents()
+    window.grab().save(str(OUTPUT_DIR / "sensorhost_wifi_connection.png"))
+
+    window.set_nodes([build_node()])
+    window.set_wifi_server_state(True, f"LISTENING {LOCAL_IPV4}:54321")
+    window.left_splitter.setSizes([385, 305])
+    window.live_target_combo.setCurrentText("UART")
+    window.update_snapshot(build_snapshot())
+    QApplication.processEvents()
+    window.grab().save(str(OUTPUT_DIR / "sensorhost_wifi_live.png"))
+
+    window.tabs.setCurrentWidget(window.diagnostics_tab)
+    window.update_snapshot(build_snapshot())
+    window.update_health(
+        AcquisitionHealth(bytes_received=8_640_000, frames_received=123456)
+    )
+    QApplication.processEvents()
+    window.grab().save(str(OUTPUT_DIR / "sensorhost_wifi_diagnostics.png"))
+
+    window.tabs.setCurrentWidget(window.console_tab)
+    window.console_view.transcript.clear()
+    window.console_view.set_current_node(NODE_ID)
+    window.console_view.append_local(
+        "Wi-Fi listener active at 192.168.43.100:54321; UDP wake 12345"
+    )
+    window.console_view.append_response("+UUID:49005000-0e50-8731-9432-39203731A4F8")
+    window.console_view.append_response("+STATE:ACQUIRE")
+    window.console_view.append_response("+LIVESTREAM:UART")
+    window.console_view.append_response("OK")
+    QApplication.processEvents()
+    window.grab().save(str(OUTPUT_DIR / "sensorhost_wifi_console.png"))
 
 
 def capture_archive_screens(window: MainWindow) -> None:
     archive = window.archive_view
+    window.set_nodes([build_node()])
+    window.set_wifi_server_state(True, f"LISTENING {LOCAL_IPV4}:54321")
     archive.set_records([build_record()])
     archive.record_table.selectRow(0)
     archive.refresh_library()
@@ -115,15 +238,7 @@ def capture_archive_screens(window: MainWindow) -> None:
 
 
 def capture_playback_screen(window: MainWindow) -> None:
-    time_s = np.linspace(-10.0, 0.0, 2000)
-    snapshot = replace(
-        empty_snapshot(),
-        time_s=time_s,
-        x_g=0.08 * np.sin(time_s * 20.0),
-        y_g=0.12 * np.sin(time_s * 16.0 + 1.0),
-        z_g=1.0 + 0.05 * np.sin(time_s * 12.0),
-        sample_rate_hz=20000.0,
-    )
+    snapshot = build_snapshot()
     window.set_playback_active(True)
     window.playback_bar.set_file_name("export-001.sdf1")
     window.playback_bar.set_state(False, 12.0, 30.0)
@@ -140,6 +255,7 @@ def main() -> None:
     load_application_fonts()
     app.setStyleSheet(dark_stylesheet())
     window = setup_window(app)
+    capture_wifi_screens(window)
     capture_archive_screens(window)
     capture_playback_screen(window)
     window.close()

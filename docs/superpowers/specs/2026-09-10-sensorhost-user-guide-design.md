@@ -9,27 +9,27 @@
 - 读者：需要使用 SensorHost 上位机查看 STM32F407 传感器数据的现场操作人员。
 - 输出：`docs/SensorHost上位机操作指南.docx`，页数以内容完整和图片清晰为准，不设固定页数上限。
 - 语气：短句、按按钮和界面区域说明，不展开协议、源码和完整故障诊断。
-- 范围：CDC 连接为主，补充 WI-FI 入口说明；覆盖 LIVE MONITOR、DIAGNOSTICS、CONSOLE、DEVICE SD RECORDS 和 LOCAL EXPORT LIBRARY 的基础用途。
+- 范围：WI-FI 现场模式为主，覆盖 LIVE MONITOR、DIAGNOSTICS、CONSOLE、DEVICE SD RECORDS 和 LOCAL EXPORT LIBRARY 的基础用途；CDC 仅作为单机调试入口一笔带过。
 - 明确边界：当前上位机支持从设备 SD 卡导出到电脑并回放，不提供将本地文件上传回 SD 卡的界面入口。
 
 ## 文档结构
 
 1. 首页：标题、适用范围、最短上手路径。
 2. 界面总览：顶部连接区、采集工具栏、设备列表、三个主要页面的职责。
-3. 连接设备：插入 USB、REFRESH、选择 CDC/COM 口、CONNECT、选择 LIVE TARGET=CDC、START；说明 CONNECT 只建立连接，不自动开始采集。
-4. 查看波形：进入 LIVE MONITOR，说明 X/Y/Z 三轴曲线、时间窗、AUTO Y、RESET VIEW、姿态卡片、PAUSE 和 Stream Health 的基础判断。
+3. 连接 Wi-Fi 设备：选择 WI-FI、配置热点网卡、PC IPv4、TCP/UDP 端口、CONNECT 启动监听、等待网关节点、选择节点、LIVE TARGET=UART、START；CDC 只保留一句调试说明。
+4. 查看波形：进入 LIVE MONITOR，说明 Wi-Fi 转发后的 X/Y/Z 三轴曲线、时间窗、AUTO Y、RESET VIEW、姿态卡片、PAUSE 和 Stream Health 的基础判断。
 5. 记录实时数据：RECORD 的开始/结束，说明它与 SD 导出不同，并给出默认保存位置。
 6. SD 卡导出和下载：STOP 后进入 SD ARCHIVE，REFRESH、选中设备、EXPORT SELECTED、查看进度，并配 SD 页面和进度截图。
 7. 导入导出文件并回放：从 LOCAL EXPORT LIBRARY 选择 complete 文件，OPEN FOR PLAYBACK 或双击，说明播放条操作，并配本地回放截图和数据流向图；明确这里的导入是上位机打开本地文件，不是上传回 SD 卡。
-8. 停止与常见提示：RECORD → STOP → DISCONNECT；提供“已连接但无波形”和“选择 CDC 报 ERROR:STATE”的简短处理。
+8. 停止与常见提示：RECORD → STOP → DISCONNECT；提供 Wi-Fi 监听、节点无波形和 CDC 调试报错的简短处理。
 
 ## 图片计划
 
 - 使用已有真实界面截图，不使用未经验证的仿制界面。
-- 图 1：`docs/ui-review-evidence/stage-4/native-live-1440x900-scale1.5.png`，标注顶部连接区、采集工具栏、设备列表、波形区和姿态区。
-- 图 2：`docs/ui-review-evidence/stage-5/native-cdc-live.png`，用于说明 CDC 已连接、LIVE TARGET、START、三轴波形和 Stream Health。
-- 图 3：`docs/ui-review-evidence/stage-5/native-cdc-diagnostics.png`，说明 DIAGNOSTICS 用于看帧数、CRC 和设备状态。
-- 图 4：`docs/ui-review-evidence/stage-5/native-cdc-console.png`，说明 CONSOLE 用于看命令回复及 SD 导出状态。
+- 图 1：`docs/artifacts/sensorhost_wifi_connection.png`，标注 WI-FI FIELD MODE、顶部连接区、采集工具栏和主页面。
+- 图 2：`docs/artifacts/sensorhost_wifi_live.png`，用于说明 Wi-Fi 监听状态、在线节点、LIVE TARGET=UART、START、三轴波形和 Stream Health。
+- 图 3：`docs/artifacts/sensorhost_wifi_diagnostics.png`，说明 Wi-Fi 节点的 DIAGNOSTICS 用于看帧数、CRC、UART 错误和设备状态。
+- 图 4：`docs/artifacts/sensorhost_wifi_console.png`，说明 CONSOLE 用于看监听、节点和设备命令回复。
 - 图 5：`docs/artifacts/sensorhost_sd_archive_overview.png`，说明 SD ARCHIVE 页面中的设备存档、本地导出库和操作按钮。
 - 图 6：`docs/artifacts/sensorhost_sd_export_progress.png`，说明 EXPORT PROGRESS 和 CANCEL。
 - 图 7：`docs/artifacts/sensorhost_playback_controls.png`，说明本地导出文件打开后的回放控制条。
@@ -46,6 +46,6 @@
 ## 验收标准
 
 - Word 能正常打开，标题和章节层级清楚。
-- 连接、波形、RECORD、SD 导出/回放的步骤与现有程序和 `docs/USER_MANUAL_zh-CN.md` 一致。
+- Wi-Fi 连接、波形、RECORD、SD 导出/回放的步骤与现有程序和 `docs/USER_MANUAL_zh-CN.md` 一致，CDC 只作为调试补充。
 - 明确 STOP 是导出前置条件，导出成功会清空设备 SD 环形存档，且当前没有“上传回 SD”入口。
 - DOCX 经 `render_docx.py` 渲染为逐页 PNG 后逐页检查，无图片越界、文字遮挡、表格截断或页脚错位。
