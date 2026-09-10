@@ -175,15 +175,26 @@ SD 中读取历史 SDF1 数据。固件 SD 为环形 spool：整卡只有一条�
 ### 7.1 使用 SD ARCHIVE 页导出
 
 1. 点击 `STOP` 并等待固件进入 IDLE（导出期间不要 START 或拔线）。
-2. 打开 `SD ARCHIVE` 页，点击 `REFRESH` 获取各节点 SD 状态。
-3. 选中目标节点行，点击 `EXPORT SELECTED`；确认对话框会提醒：导出为
-   move 语义，导出成功后设备 SD 环数据被清空，本地文件成为唯一存档。
+   上位机现在会强制检查：采集进行中点导出会被拒绝并提示
+   “stop acquisition before exporting…”，不会产生空文件。
+2. 打开 `SD ARCHIVE` 页（三张卡之间可用胶囊分隔条拖动调高），
+   点击 `REFRESH` 获取各节点 SD 状态。
+3. 选中目标节点行（选中行为灰色高亮），点击 `EXPORT SELECTED`；
+   确认对话框会提醒：导出为 move 语义，导出成功后设备 SD 环数据被
+   清空，本地文件成为唯一存档。
 4. `EXPORT PROGRESS` 卡显示进度、已收/总字节、速度与耗时；`CANCEL`
    发送 `AT+STOP` 取消本次导出（已接收部分保留并标记 aborted）。
-5. 完成后收到 `EXPORT_END:CHUNKS=<n>,FRAMES=<n>`；空存档返回
+   导出期间上位机暂停该节点的 `AT+STATE?` 轮询，避免与导出帧争用
+   同一条发送通道。
+5. 若固件在发出第一帧前 abort（瞬态发送失败），上位机自动重试一次
+   （横幅提示 automatic retry 1/1）；若 10 秒内零字节且无终态，横幅
+   提示 export stalled 并将文件标记 stalled；终态异常会给出明确横幅
+   （aborted/empty），请结合 CONSOLE 的 `EXPORT_BEGIN/EXPORT_ABORTED/
+   EXPORT_END` 行反馈定位。
+6. 完成后收到 `EXPORT_END:CHUNKS=<n>,FRAMES=<n>`；空存档返回
    `EXPORT_EMPTY`。文件保存在默认数据目录 `exports/<时间戳>/<节点>/` 下，
-   并出现在页下方的 `LOCAL EXPORT LIBRARY` 列表（文件名、导出时间、
-   大小、来源设备、状态）。
+   并出现在页下方的 `LOCAL EXPORT LIBRARY` 列表（文件名、导出时间
+   按本机时区显示、大小、来源设备、状态）。
 
 CDC 连接走 `AT+EXPORT=CDC`，Wi‑Fi 节点走 `AT+EXPORT=UART`，由上位机按
 传输类型自动选择。仍可在 `CONSOLE` 手敲上述命令触发导出。
