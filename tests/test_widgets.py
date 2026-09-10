@@ -1075,3 +1075,16 @@ def test_clear_live_views_is_ignored_while_playback_owns_views(qtbot) -> None:
     window.exit_playback()
     assert window.health_value_labels["sample_rate"].text() == "—"
     assert window.playback_bar.isHidden()
+
+
+def test_live_snapshots_are_ignored_while_playback_active(qtbot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.set_playback_active(True)
+
+    window.update_live_snapshot(populated_snapshot())
+
+    assert window.health_value_labels["sample_rate"].text() == "—"
+    window.set_playback_active(False)
+    window.update_live_snapshot(populated_snapshot())
+    assert window.health_value_labels["sample_rate"].text() == "1,000"

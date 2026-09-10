@@ -11,6 +11,8 @@ from sensor_host.presentation.main_window import MainWindow
 from sensor_host.transport import AcceptedGatewayClient
 from sensor_host.transport import WifiServerConfig
 
+from test_archive_library import write_archive
+
 
 def encode_jy_frame(
     device_uuid: uuid.UUID, sequence: int = 1, flags: int = 0
@@ -792,5 +794,35 @@ def test_last_gateway_death_clears_display_while_listener_stays_up(qtbot) -> Non
     try:
         qtbot.waitUntil(lambda: bool(clears), timeout=2000)
         assert not controller._sessions
+    finally:
+        controller.disconnect_device()
+
+
+def test_open_export_enters_playback_and_stop_returns_to_live(qtbot, tmp_path) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+    controller = AppController(RecordingIdleTransport)
+    sensor_host_app._wire_archive_and_playback(window, controller)
+    try:
+        path = write_archive(tmp_path / "export.sdf1")
+        window.archive_view.open_requested.emit(path)
+        qtbot.waitUntil(lambda: window._playback_active, timeout=5000)
+        assert not window.playback_bar.isHidden()
+        assert window.tabs.currentWidget() is window.live_tab
+        assert window.playback_bar.file_label.text() == "export.sdf1"
+
+        window.playback_bar.play_button.click()
+        qtbot.waitUntil(
+            lambda: window.vibration_view.rate_label.text()
+            != "0 samples/s · 0 visible points",
+            timeout=3000,
+        )
+
+        window.playback_bar.stop_button.click()
+        qtbot.waitUntil(lambda: not window._playback_active, timeout=2000)
+        assert window.playback_bar.isHidden()
+        assert window.vibration_view.rate_label.text() == (
+            "0 samples/s · 0 visible points"
+        )
     finally:
         controller.disconnect_device()

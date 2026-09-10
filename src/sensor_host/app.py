@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
 from pathlib import Path
 
-from PyQt6.QtCore import QObject, QSettings, QThread, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QObject, QSettings, pyqtSignal
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication
 
@@ -27,23 +28,10 @@ SMOKE_TEST_ARGUMENT = "--smoke-test"
 OFFSCREEN_PLATFORM = "offscreen"
 
 
-class _IndexWorker(QObject):
-    """Build one playback index off the GUI thread."""
+class _IndexBridge(QObject):
+    """Deliver background playback-index results back to the GUI thread."""
 
-    finished = pyqtSignal(object, object, str)
-
-    def __init__(self, path: Path) -> None:
-        super().__init__()
-        self._path = path
-
-    @pyqtSlot()
-    def run(self) -> None:
-        try:
-            index = build_playback_index(self._path)
-        except OSError as error:
-            self.finished.emit(self._path, None, str(error))
-            return
-        self.finished.emit(self._path, index, "")
+    ready = pyqtSignal(object, object, str)
 
 
 def _wire_acquisition_controls(
@@ -178,34 +166,33 @@ def _wire_archive_and_playback(window: MainWindow, controller: AppController) ->
     window.archive_view.refresh_requested.connect(controller.request_status_all)
     controller.export_finished.connect(window.archive_view.on_export_finished)
 
-    index_threads: list[QThread] = []
+    index_bridge = _IndexBridge()
+
+    def finish(index_path: object, index: object, error: str) -> None:
+        window.archive_view.set_open_busy(False)
+        if index is None:
+            window.show_error(f"indexing {Path(index_path).name} failed: {error}")
+            return
+        playback.load(Path(index_path), index)  # type: ignore[arg-type]
+        window.playback_bar.set_file_name(Path(index_path).name)
+        window.clear_live_views()
+        window.set_playback_active(True)
+
+    index_bridge.ready.connect(finish)
 
     def open_for_playback(path: Path) -> None:
         window.archive_view.set_open_busy(True)
-        thread = QThread(window)
-        worker = _IndexWorker(path)
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
 
-        def finish(index_path: object, index: object, error: str) -> None:
-            window.archive_view.set_open_busy(False)
-            thread.quit()
-            if index is None:
-                window.show_error(f"indexing {Path(index_path).name} failed: {error}")
-                return
-            playback.load(Path(index_path), index)  # type: ignore[arg-type]
-            window.playback_bar.set_file_name(Path(index_path).name)
-            window.clear_live_views()
-            window.set_playback_active(True)
+        def work() -> None:
+            try:
+                index = build_playback_index(path)
+                error = ""
+            except OSError as read_error:
+                index = None
+                error = str(read_error)
+            index_bridge.ready.emit(path, index, error)
 
-        worker.finished.connect(finish)
-        thread.finished.connect(worker.deleteLater)
-        thread.finished.connect(thread.deleteLater)
-        thread.finished.connect(
-            lambda: index_threads.remove(thread) if thread in index_threads else None
-        )
-        index_threads.append(thread)
-        thread.start()
+        threading.Thread(target=work, daemon=True, name="sdf1-index").start()
 
     window.archive_view.open_requested.connect(open_for_playback)
     window.archive_view.set_controller(controller)
