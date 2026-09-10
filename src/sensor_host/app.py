@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sys
 import threading
+from collections.abc import Callable
 from pathlib import Path
 
 from PyQt6.QtCore import QObject, QSettings, pyqtSignal
@@ -20,11 +21,12 @@ from sensor_host.presentation import (
 )
 from sensor_host.presentation.playback_controller import PlaybackController
 from sensor_host.storage import build_playback_index
-from sensor_host.transport import CdcSerialTransport
+from sensor_host.transport import CdcSerialTransport, FakeTransport, Transport
 from sensor_host.presentation.connection_view import discover_ipv4_interfaces
 
 
 SMOKE_TEST_ARGUMENT = "--smoke-test"
+FAKE_ARGUMENT = "--fake"
 OFFSCREEN_PLATFORM = "offscreen"
 
 
@@ -91,15 +93,20 @@ def _run_smoke_test(application: QApplication) -> int:
     return 0
 
 
-def _run_interactive(application: QApplication) -> int:
+def _run_interactive(
+    application: QApplication,
+    *,
+    transport_factory: Callable[[], Transport] = CdcSerialTransport,
+    fake_mode: bool = False,
+) -> int:
     """Wire transports and controllers, then run the interactive event loop."""
     settings = QSettings("OpenAI", "STM32SensorHost")
     window = MainWindow(settings=settings)
-    controller = AppController(CdcSerialTransport, settings=settings)
+    controller = AppController(transport_factory, settings=settings)
 
     def refresh_devices() -> None:
         window.set_network_interfaces(discover_ipv4_interfaces())
-        discovery = CdcSerialTransport()
+        discovery = transport_factory()
         try:
             devices = discovery.discover()
         except (OSError, RuntimeError) as error:
@@ -138,6 +145,8 @@ def _run_interactive(application: QApplication) -> int:
     _wire_archive_and_playback(window, controller)
     application.aboutToQuit.connect(controller.disconnect_device)
     refresh_devices()
+    if fake_mode:
+        controller.connect_device(FakeTransport.DEVICE_ID)
     window.wifi_panel.restore_settings(settings)
     _fit_window_to_available_geometry(window)
     window.show()
@@ -203,10 +212,13 @@ def main(argv: list[str] | None = None) -> int:
     """Run the interactive host or its deterministic packaging smoke mode."""
     arguments = list(sys.argv if argv is None else argv)
     is_smoke_test = SMOKE_TEST_ARGUMENT in arguments[1:]
+    is_fake = FAKE_ARGUMENT in arguments[1:]
     if is_smoke_test:
         os.environ.setdefault("QT_QPA_PLATFORM", OFFSCREEN_PLATFORM)
         arguments = [
-            argument for argument in arguments if argument != SMOKE_TEST_ARGUMENT
+            argument
+            for argument in arguments
+            if argument not in {SMOKE_TEST_ARGUMENT, FAKE_ARGUMENT}
         ]
     existing_application = QApplication.instance()
     original_stylesheet = (
@@ -222,7 +234,11 @@ def main(argv: list[str] | None = None) -> int:
             if original_stylesheet is not None:
                 application.setStyleSheet(original_stylesheet)
                 application.processEvents()
-    return _run_interactive(application)
+    return _run_interactive(
+        application,
+        transport_factory=FakeTransport if is_fake else CdcSerialTransport,
+        fake_mode=is_fake,
+    )
 
 
 if __name__ == "__main__":

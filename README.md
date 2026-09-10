@@ -18,6 +18,18 @@ py -3.12 -m venv .venv
 
 No STM32 or ESP32 source checkout, compiler, sibling directory or submodule is required.
 
+### Test the UI without hardware
+
+Start the normal dashboard with one virtual sensor:
+
+```powershell
+& .\.venv\Scripts\stm32-sensor-host.exe --fake
+```
+
+Fake mode supplies deterministic live vibration/orientation data and a populated
+SD ring. Its deliberately slow export exercises progress, Cancel and CLEAR SD
+without opening a serial port or requiring firmware.
+
 ## Test and package
 
 ```powershell
