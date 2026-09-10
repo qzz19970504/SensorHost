@@ -39,6 +39,7 @@ _MAXIMUM_WIFI_SESSIONS = 16
 _MAXIMUM_DISPLAY_POINTS = 5_000
 _IIS_SAMPLE_RATE_HZ = 26_667.0
 _EXPORT_FIRST_BYTE_TIMEOUT_S = 10.0
+_EXPORT_AUTO_RETRIES = 1
 _SAFE_PATH_PATTERN = re.compile(r"[^A-Za-z0-9._-]+")
 
 
@@ -110,6 +111,8 @@ class _ManagedSession:
     archive_total_bytes: int = 0
     archive_path: Path | None = None
     archive_started_s: float = 0.0
+    archive_target: str = ""
+    archive_retries: int = 0
     failure: str | None = None
 
 
@@ -597,6 +600,8 @@ class AppController(QObject):
             return
         session.archive_total_bytes = state.sd_used or 0
         session.archive_path = path
+        session.archive_target = target
+        session.archive_retries = 0
         session.acquisition.enqueue_command(f"AT+EXPORT={target}")
         self.export_started.emit(node_id, str(path), session.archive_total_bytes)
 
@@ -876,6 +881,10 @@ class AppController(QObject):
             self.error_raised.emit(str(error))
             return
         if phase == "ABORTED" and summary.bytes_written == 0:
+            if session.archive_retries < _EXPORT_AUTO_RETRIES:
+                session.archive_retries += 1
+                self._retry_export_after_abort(session)
+                return
             self.error_raised.emit(
                 "firmware aborted the export before transmitting any frame; "
                 "retry after STOP and inspect the CONSOLE EXPORT_* lines"
@@ -883,6 +892,27 @@ class AppController(QObject):
         elif phase == "EMPTY":
             self.error_raised.emit("device SD ring is empty; nothing to export")
         self.export_finished.emit(session.node_id, phase or "UNKNOWN", str(summary.path))
+
+    def _retry_export_after_abort(self, session: _ManagedSession) -> None:
+        """Re-arm one export after a zero-byte firmware abort (transient UART)."""
+        target = session.archive_target or (
+            "CDC" if session.transport_kind is TransportKind.CDC else "UART"
+        )
+        try:
+            path = self._start_archive_recording(session)
+        except (OSError, RuntimeError, ValueError) as error:
+            self.error_raised.emit(str(error))
+            return
+        session.archive_path = path
+        session.archive_target = target
+        session.acquisition.enqueue_command(f"AT+EXPORT={target}")
+        self.error_raised.emit(
+            f"firmware aborted the export before the first frame; automatic "
+            f"retry {session.archive_retries}/{_EXPORT_AUTO_RETRIES} started"
+        )
+        self.export_started.emit(
+            session.node_id, str(path), session.archive_total_bytes
+        )
 
     def _watchdog_stalled_export(self, session: _ManagedSession) -> None:
         """Detach an export that never received a single archive frame."""

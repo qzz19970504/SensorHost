@@ -947,6 +947,62 @@ def test_stalled_export_watchdog_detaches_recorder(qtbot) -> None:
         controller.disconnect_device()
 
 
+def test_zero_byte_abort_triggers_one_automatic_retry(qtbot) -> None:
+    from test_archive_library import DEVICE_UUID
+
+    transport = QueueTransport()
+    controller = AppController(lambda: transport)
+    errors: list[str] = []
+    controller.error_raised.connect(errors.append)
+    controller.accept_gateway_client(
+        AcceptedGatewayClient("wifi-1", "peer-1", transport)  # type: ignore[arg-type]
+    )
+    try:
+        transport.chunks.put(encode_jy_frame(DEVICE_UUID, sequence=1))
+        qtbot.waitUntil(
+            lambda: controller._session_index.summary("wifi-1").device_uuid
+            is not None,
+            timeout=2000,
+        )
+        transport.chunks.put(
+            encode_cli_frame(
+                "+STATE:IDLE\r\n"
+                "+SD:USED=64,CAPACITY=1024,PENDING_FRAMES=0,RETAINED_CHUNKS=1,"
+                "RETAINED_FRAMES=2,OVERWRITTEN_CHUNKS=0,OVERWRITTEN_FRAMES=0,"
+                "READY=1,FORMAT_REQUIRED=0\r\n"
+                "OK\r\n",
+                sequence=2,
+            )
+        )
+        qtbot.waitUntil(
+            lambda: controller.sd_records()
+            and controller.sd_records()[0].sd_ready is True,
+            timeout=2000,
+        )
+        controller.start_export_for("wifi-1")
+        qtbot.waitUntil(
+            lambda: transport.commands.count(b"AT+EXPORT=UART") == 1,
+            timeout=2000,
+        )
+        session = controller._sessions["wifi-1"]
+
+        transport.chunks.put(encode_cli_frame("EXPORT_ABORTED\r\n", sequence=3))
+        qtbot.waitUntil(
+            lambda: transport.commands.count(b"AT+EXPORT=UART") == 2,
+            timeout=3000,
+        )
+        assert session.archive_recorder is not None
+        assert any("automatic retry" in message for message in errors)
+
+        transport.chunks.put(encode_cli_frame("EXPORT_ABORTED\r\n", sequence=4))
+        qtbot.waitUntil(lambda: session.archive_recorder is None, timeout=3000)
+        qtbot.wait(150)
+        assert transport.commands.count(b"AT+EXPORT=UART") == 2
+        assert any("retry after STOP" in message for message in errors)
+    finally:
+        controller.disconnect_device()
+
+
 def test_open_export_enters_playback_and_stop_returns_to_live(qtbot, tmp_path) -> None:
     window = MainWindow()
     qtbot.addWidget(window)

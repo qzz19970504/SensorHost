@@ -1,6 +1,7 @@
 from dataclasses import replace
 
 import numpy as np
+import pytest
 from PyQt6.QtCore import QSettings, Qt
 from PyQt6.QtWidgets import QFrame, QLabel
 
@@ -1139,3 +1140,27 @@ def test_archive_tab_uses_vertical_capsule_splitter(qtbot) -> None:
 
     assert splitter.orientation() == Qt.Orientation.Vertical
     assert splitter.count() == 3
+
+
+def test_playback_bar_emits_seek_speed_and_play(qtbot) -> None:
+    from sensor_host.presentation.playback_bar import PlaybackBar
+
+    bar = PlaybackBar()
+    qtbot.addWidget(bar)
+    bar.set_state(False, 0.0, 4.0)
+    seeks: list[float] = []
+    speeds: list[float] = []
+    plays: list[bool] = []
+    bar.seek_requested.connect(seeks.append)
+    bar.speed_changed.connect(speeds.append)
+    bar.play_toggled.connect(plays.append)
+
+    bar.seek_slider.setValue(500)
+    bar.seek_slider.sliderReleased.emit()
+    bar.speed_combo.setCurrentText("4×")
+    bar.play_button.click()
+
+    assert seeks == [pytest.approx(2.0)]
+    assert speeds == [4.0]
+    assert plays == [True]
+    assert bar.time_label.text() == "0:00.0 / 0:04.0"
