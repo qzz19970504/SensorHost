@@ -798,6 +798,79 @@ def test_last_gateway_death_clears_display_while_listener_stays_up(qtbot) -> Non
         controller.disconnect_device()
 
 
+def test_export_then_library_open_replays_end_to_end(qtbot, tmp_path) -> None:
+    from test_archive_library import DEVICE_UUID, encode_iis_frame
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    transport = QueueTransport()
+    controller = AppController(lambda: transport)
+    sensor_host_app._wire_archive_and_playback(window, controller)
+    controller.accept_gateway_client(
+        AcceptedGatewayClient("wifi-1", "peer-1", transport)  # type: ignore[arg-type]
+    )
+    try:
+        transport.chunks.put(encode_jy_frame(DEVICE_UUID, sequence=1))
+        qtbot.waitUntil(
+            lambda: controller._session_index.summary("wifi-1").device_uuid
+            is not None,
+            timeout=2000,
+        )
+        transport.chunks.put(
+            encode_cli_frame(
+                "+STATE:IDLE\r\n"
+                "+SD:USED=64,CAPACITY=1024,PENDING_FRAMES=0,RETAINED_CHUNKS=1,"
+                "RETAINED_FRAMES=2,OVERWRITTEN_CHUNKS=0,OVERWRITTEN_FRAMES=0,"
+                "READY=1,FORMAT_REQUIRED=0\r\n"
+                "OK\r\n",
+                sequence=2,
+            )
+        )
+        qtbot.waitUntil(
+            lambda: controller.sd_records()
+            and controller.sd_records()[0].sd_ready is True,
+            timeout=2000,
+        )
+
+        controller.start_export_for("wifi-1")
+        qtbot.waitUntil(
+            lambda: b"AT+EXPORT=UART" in transport.commands, timeout=2000
+        )
+        transport.chunks.put(
+            encode_iis_frame(3, 1_000_000, flags=0x8000)
+        )
+        transport.chunks.put(
+            encode_iis_frame(4, 2_000_000, flags=0x8000)
+        )
+        transport.chunks.put(
+            encode_cli_frame("EXPORT_END:CHUNKS=1,FRAMES=2\r\n", sequence=5)
+        )
+        qtbot.waitUntil(
+            lambda: controller._sessions["wifi-1"].archive_recorder is None,
+            timeout=3000,
+        )
+        qtbot.waitUntil(
+            lambda: window.archive_view.library_table.rowCount() == 1,
+            timeout=2000,
+        )
+
+        window.archive_view.library_table.selectRow(0)
+        window.archive_view.open_button.click()
+        qtbot.waitUntil(lambda: window._playback_active, timeout=5000)
+        assert window.playback_bar.file_label.text().endswith(".sdf1")
+
+        window.playback_bar.play_button.click()
+        qtbot.waitUntil(
+            lambda: window.vibration_view.rate_label.text()
+            != "0 samples/s · 0 visible points",
+            timeout=3000,
+        )
+        window.playback_bar.stop_button.click()
+        qtbot.waitUntil(lambda: not window._playback_active, timeout=2000)
+    finally:
+        controller.disconnect_device()
+
+
 def test_open_export_enters_playback_and_stop_returns_to_live(qtbot, tmp_path) -> None:
     window = MainWindow()
     qtbot.addWidget(window)
