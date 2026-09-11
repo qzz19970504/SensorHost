@@ -26,6 +26,7 @@ FLOW_IMAGE = ASSET_DIR / "sensorhost_sd_export_flow.png"
 SD_ARCHIVE_SCREENSHOT = ASSET_DIR / "sensorhost_sd_archive_overview.png"
 SD_PROGRESS_SCREENSHOT = ASSET_DIR / "sensorhost_sd_export_progress.png"
 PLAYBACK_SCREENSHOT = ASSET_DIR / "sensorhost_playback_controls.png"
+HOTSPOT_IP_IMAGE = ASSET_DIR / "pc_hotspot_ip_setup.jpg"
 
 BLACK = "000000"
 TEXT = "202A36"
@@ -344,6 +345,7 @@ def build_doc() -> None:
         SD_ARCHIVE_SCREENSHOT,
         SD_PROGRESS_SCREENSHOT,
         PLAYBACK_SCREENSHOT,
+        HOTSPOT_IP_IMAGE,
     ):
         if not path.exists():
             raise FileNotFoundError(path)
@@ -364,21 +366,33 @@ def build_doc() -> None:
 
     add_body(doc, "本指南面向第一次使用 SensorHost 的现场操作人员，主线按 Wi-Fi 连接方式编写。按下面的顺序操作，即可完成网络连接、查看实时数据、保存记录，并把设备 SD 卡中的历史数据导出到电脑。")
     add_heading(doc, "最短上手路径", 1)
-    add_step(doc, 1, "准备网络。", "让电脑和每个设备网关加入同一个手机热点，确认热点允许设备之间通信。")
+    add_step(doc, 1, "准备网络。", "让电脑连接可用 Wi-Fi 并开启移动热点，设备网关加入该热点，确认热点允许设备之间通信。")
     add_step(doc, 2, "启动监听。", "选择 WI-FI，填写热点网卡、PC IPv4 和端口，点击 CONNECT，看到 LISTENING。")
     add_step(doc, 3, "开始采集。", "在 DEVICES 中选中在线节点，将 LIVE TARGET 设为 UART，点击 START。")
     add_step(doc, 4, "查看波形。", "在 LIVE MONITOR 中观察 X、Y、Z 三轴曲线和姿态数据。")
     add_step(doc, 5, "保存或导出。", "点击 RECORD 保存实时数据；需要导出 SD 历史数据时，先 STOP，再进入 SD ARCHIVE。")
     add_heading(doc, "使用前准备", 1)
-    add_bullet(doc, "电脑已连接手机热点或现场 Wi-Fi；每个设备网关也加入同一个网络。")
-    add_bullet(doc, "已知设备端配置中预设的 PC IPv4；上位机选择的热点网卡 IPv4 必须与它一致。")
+    add_bullet(doc, "电脑先连接可用 Wi-Fi，再开启移动热点；每个设备网关加入电脑热点。")
+    add_bullet(doc, "热点对应 WLAN 网卡的 IPv4 固定为 192.168.137.201；设备端目标地址也使用这个 IP。")
     add_bullet(doc, "默认 TCP 端口为 54321、UDP 唤醒端口为 12345；只有端口被修改时才需要改动。")
     add_warning(doc, "Wi-Fi 模式下 CONNECT 启动的是电脑端监听，不会自动启动设备采集。看到节点在线后，还要选择 LIVE TARGET=UART 并点击 START。CDC 仅用于单机调试。")
 
-    # Page 2: interface overview.
+    # Page 2: computer hotspot and fixed IP setup.
+    add_heading(doc, "电脑热点与固定 IP 配置", 1, page_break_before=True)
+    add_body(doc, "本指南采用“电脑连接 Wi-Fi、电脑开启热点、设备主动连接电脑”的网络方式。电脑热点对应网卡需要使用固定地址 192.168.137.201，设备端把这个地址作为数据接收目标。")
+    add_step(doc, 1, "连接外网 Wi-Fi。", "电脑先连接可用的 Wi-Fi 网络；如果现场不需要访问外网，也可以只保证无线网卡正常工作。")
+    add_step(doc, 2, "开启移动热点。", "在 Windows 设置中开启移动热点，记下热点名称和密码，供设备加入。")
+    add_step(doc, 3, "打开网络连接。", "按 Win+R，输入 ncpa.cpl 并回车，直接打开网络连接窗口。")
+    add_step(doc, 4, "找到热点网卡。", "找到与电脑移动热点对应的 WLAN 网卡；不要把地址改到正在上网的其他网卡。")
+    add_step(doc, 5, "设置 IPv4。", "右键 WLAN 网卡，打开属性，双击 Internet 协议版本 4 (TCP/IPv4)，选择“使用下面的 IP 地址”。")
+    add_step(doc, 6, "填写固定地址。", "IP 地址填写 192.168.137.201，子网掩码填写 255.255.255.0。网关和 DNS 按现场网络需要填写；设备端目标地址必须与 IP 地址完全一致。")
+    add_picture(doc, HOTSPOT_IP_IMAGE, 2.55, "图 1  Windows 网卡 IPv4 设置入口示意")
+    add_warning(doc, "如果设备无法连接，优先检查：设备是否加入电脑热点、修改 IP 的是否为热点对应 WLAN 网卡、上位机监听 IP 是否为 192.168.137.201，以及 Windows 防火墙是否允许对应端口。")
+
+    # Page 3: interface overview.
     add_heading(doc, "1 界面总览", 1, page_break_before=True)
     add_body(doc, "上位机按“连接、采集、设备、数据页面”分区。Wi-Fi 现场使用时，先配置左侧 WI-FI FIELD MODE，再从 DEVICES 选择要查看的节点。")
-    add_picture(doc, OVERVIEW_SCREENSHOT, 6.0, "图 1  Wi-Fi 模式连接配置界面")
+    add_picture(doc, OVERVIEW_SCREENSHOT, 6.0, "图 2  Wi-Fi 模式连接配置界面")
     add_table(
         doc,
         ["功能区", "主要用途"],
@@ -395,19 +409,19 @@ def build_doc() -> None:
         [1.65, 5.0],
     )
 
-    # Page 3: connection.
+    # Page 4: connection.
     add_heading(doc, "2 连接 Wi-Fi 设备", 1, page_break_before=True)
     add_body(doc, "Wi-Fi 模式下，上位机在电脑端监听 TCP，设备网关主动连接上位机。监听建立后，可在 DEVICES 中同时查看多个网关节点。")
-    add_picture(doc, LIVE_SCREENSHOT, 6.65, "图 2  Wi-Fi 监听已启动并显示在线节点")
-    add_step(doc, 1, "准备同一网络。", "电脑和每个设备网关加入同一个手机热点；关闭热点的客户端隔离，并允许 Windows 防火墙接收上位机 TCP 入站连接。")
+    add_picture(doc, LIVE_SCREENSHOT, 6.65, "图 3  Wi-Fi 监听已启动并显示在线节点")
+    add_step(doc, 1, "准备同一网络。", "电脑连接 Wi-Fi 并开启移动热点，设备网关加入电脑热点；关闭热点的客户端隔离，并允许 Windows 防火墙接收上位机 TCP 入站连接。")
     add_step(doc, 2, "选择 WI-FI。", "在顶部通路下拉框选择 WI-FI，左侧显示 WI-FI FIELD MODE 配置区。")
-    add_step(doc, 3, "选择热点网卡。", "在 PHONE HOTSPOT INTERFACE 中选择手机热点对应的 IPv4 网卡，例如 192.168.43.100/24。")
-    add_step(doc, 4, "核对 PC IPv4。", "PC IPv4 PRESET IN DEVICE CONFIG 必须填写与所选网卡相同的地址；这不是随意填写的设备 IP。")
+    add_step(doc, 3, "选择热点网卡。", "在 PHONE HOTSPOT INTERFACE 中选择电脑移动热点对应的 WLAN 网卡，例如 192.168.137.201/24。")
+    add_step(doc, 4, "核对 PC IPv4。", "PC IPv4 PRESET IN DEVICE CONFIG 填写 192.168.137.201，并与热点网卡实际地址相同；这不是随意填写的设备 IP。")
     add_step(doc, 5, "核对端口。", "默认 TCP LISTEN PORT 为 54321、UDP WAKE PORT 为 12345；如设备端配置使用其他值，按设备端配置填写。")
     add_step(doc, 6, "启动监听。", "点击 CONNECT，右上角显示 LISTENING <PC IPv4>:<TCP 端口>。设备网关会主动连入；必要时可填写 OPTIONAL DEVICE IPv4 TARGETS 发送定向唤醒。")
     add_step(doc, 7, "选择节点并采集。", "等待 DEVICES 出现在线节点，点击目标行；将 LIVE TARGET 设为 UART，点击 START，等待 CONSOLE 返回 OK。")
 
-    # Page 4: waveform and health.
+    # Page 5: waveform and health.
     add_heading(doc, "3 查看波形和判断是否正常", 1, page_break_before=True)
     add_body(doc, "采集开始后，LIVE MONITOR 是最常用页面。Wi-Fi 数据经过设备网关转发到电脑；中间的大图是三轴振动，右侧是姿态和加速度。")
     add_heading(doc, "实时波形区", 2)
@@ -428,8 +442,8 @@ def build_doc() -> None:
     image_table.autofit = False
     for idx, (path, caption) in enumerate(
         [
-            (DIAGNOSTICS_SCREENSHOT, "图 3  DIAGNOSTICS：帧数、CRC 与设备状态"),
-            (CONSOLE_SCREENSHOT, "图 4  CONSOLE：查看 OK、状态和导出回复"),
+            (DIAGNOSTICS_SCREENSHOT, "图 4  DIAGNOSTICS：帧数、CRC 与设备状态"),
+            (CONSOLE_SCREENSHOT, "图 5  CONSOLE：查看 OK、状态和导出回复"),
         ]
     ):
         cell = image_table.rows[0].cells[idx]
@@ -446,7 +460,7 @@ def build_doc() -> None:
         for run in cp.runs:
             set_run_font(run, size=8.3, color=MUTED)
 
-    # Page 5: recording and SD export.
+    # Page 6: recording and SD export.
     add_heading(doc, "4 记录实时数据", 1, page_break_before=True)
     add_body(doc, "RECORD 保存的是上位机通过 Wi-Fi 收到的实时 SDF1 数据，和设备 SD 卡中的历史存档是两条不同的数据路径。")
     add_step(doc, 1, "开始记录。", "设备已连接并有实时数据时，点击 RECORD。按钮保持选中状态，并显示当前记录会话数。")
@@ -456,7 +470,7 @@ def build_doc() -> None:
 
     add_heading(doc, "5 SD 卡导出和下载", 1)
     add_body(doc, "SD ARCHIVE 用于把当前 Wi-Fi 节点设备 SD 卡中的历史数据导出到电脑。导出前必须先让设备处于 IDLE。")
-    add_picture(doc, SD_ARCHIVE_SCREENSHOT, 6.65, "图 5  SD ARCHIVE 页面：设备存档、导出按钮和本地导出库")
+    add_picture(doc, SD_ARCHIVE_SCREENSHOT, 6.65, "图 6  SD ARCHIVE 页面：设备存档、导出按钮和本地导出库")
     add_step(doc, 1, "先停止采集。", "点击 STOP，等待 CONSOLE 返回 OK，并确认设备状态为 IDLE。")
     add_step(doc, 2, "打开 SD ARCHIVE。", "切换到 SD ARCHIVE 页面，点击 REFRESH 获取设备 SD 状态。")
     add_step(doc, 3, "选择并导出。", "选中目标设备行，点击 EXPORT SELECTED，并确认导出提示。")
@@ -464,18 +478,18 @@ def build_doc() -> None:
     add_step(doc, 5, "确认本地文件。", "完成后文件会进入 LOCAL EXPORT LIBRARY，状态为 complete 的记录可以继续回放。")
     add_warning(doc, "导出成功后设备 SD 环形存档会被清空，本地文件成为唯一存档副本。当前版本不提供把电脑文件上传回 SD 卡的功能。")
 
-    # Page 6: export progress and import/playback.
+    # Page 7: export progress and import/playback.
     add_heading(doc, "6 查看导出进度", 1)
     add_body(doc, "导出期间，EXPORT PROGRESS 会显示当前状态。正常完成后状态为 COMPLETE；如果中途取消或连接中断，记录会保留相应的中止状态。")
-    add_picture(doc, SD_PROGRESS_SCREENSHOT, 6.65, "图 6  导出进行中：查看进度并可取消本次导出")
+    add_picture(doc, SD_PROGRESS_SCREENSHOT, 6.65, "图 7  导出进行中：查看进度并可取消本次导出")
     add_bullet(doc, "EXPORT PROGRESS：查看接收字节、SD 分配空间、速度和耗时；Wi-Fi 导出时数据由当前节点经网关传回电脑。")
     add_bullet(doc, "CANCEL：需要中止时点击；已接收部分会保留并标记为 aborted。")
     add_bullet(doc, "导出结束后回到 LOCAL EXPORT LIBRARY，优先选择状态为 complete 的文件回放。")
 
     add_heading(doc, "7 导入导出文件并回放", 1)
     add_body(doc, "这里的“导入”是把电脑上的导出文件打开到上位机进行回放，不会把文件写回设备 SD 卡。导出文件不需要重新连接设备即可回放。")
-    add_picture(doc, FLOW_IMAGE, 6.65, "图 7  SD 历史数据导出、导入上位机与回放的数据方向")
-    add_picture(doc, PLAYBACK_SCREENSHOT, 6.65, "图 8  回放状态：文件名、播放控制、进度和倍速")
+    add_picture(doc, FLOW_IMAGE, 6.65, "图 8  SD 历史数据导出、导入上位机与回放的数据方向")
+    add_picture(doc, PLAYBACK_SCREENSHOT, 6.65, "图 9  回放状态：文件名、播放控制、进度和倍速")
     add_step(doc, 1, "选择文件。", "在 LOCAL EXPORT LIBRARY 中选中状态为 complete 的导出记录。")
     add_step(doc, 2, "打开回放。", "点击 OPEN FOR PLAYBACK，或双击记录行；等待文件索引完成。")
     add_step(doc, 3, "控制播放。", "使用 PLAY / PAUSE、STOP、进度条拖动和 0.5×、1×、2×、4× 速度。")

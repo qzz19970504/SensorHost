@@ -16,7 +16,8 @@
 
 1. 首页：标题、适用范围、最短上手路径。
 2. 界面总览：顶部连接区、采集工具栏、设备列表、三个主要页面的职责。
-3. 连接 Wi-Fi 设备：选择 WI-FI、配置热点网卡、PC IPv4、TCP/UDP 端口、CONNECT 启动监听、等待网关节点、选择节点、LIVE TARGET=UART、START；CDC 只保留一句调试说明。
+3. 电脑热点和固定 IP：电脑连接 Wi-Fi 后开启移动热点，将热点对应 WLAN 网卡设为 192.168.137.201，设备端使用该地址连接上位机。
+4. 连接 Wi-Fi 设备：选择 WI-FI、配置热点网卡、PC IPv4、TCP/UDP 端口、CONNECT 启动监听、等待网关节点、选择节点、LIVE TARGET=UART、START；CDC 只保留一句调试说明。
 4. 查看波形：进入 LIVE MONITOR，说明 Wi-Fi 转发后的 X/Y/Z 三轴曲线、时间窗、AUTO Y、RESET VIEW、姿态卡片、PAUSE 和 Stream Health 的基础判断。
 5. 记录实时数据：RECORD 的开始/结束，说明它与 SD 导出不同，并给出默认保存位置。
 6. SD 卡导出和下载：STOP 后进入 SD ARCHIVE，REFRESH、选中设备、EXPORT SELECTED、查看进度，并配 SD 页面和进度截图。
@@ -26,13 +27,14 @@
 ## 图片计划
 
 - 使用已有真实界面截图，不使用未经验证的仿制界面。
-- 图 1：`docs/artifacts/sensorhost_wifi_connection.png`，标注 WI-FI FIELD MODE、顶部连接区、采集工具栏和主页面。
-- 图 2：`docs/artifacts/sensorhost_wifi_live.png`，用于说明 Wi-Fi 监听状态、在线节点、LIVE TARGET=UART、START、三轴波形和 Stream Health。
-- 图 3：`docs/artifacts/sensorhost_wifi_diagnostics.png`，说明 Wi-Fi 节点的 DIAGNOSTICS 用于看帧数、CRC、UART 错误和设备状态。
-- 图 4：`docs/artifacts/sensorhost_wifi_console.png`，说明 CONSOLE 用于看监听、节点和设备命令回复。
-- 图 5：`docs/artifacts/sensorhost_sd_archive_overview.png`，说明 SD ARCHIVE 页面中的设备存档、本地导出库和操作按钮。
-- 图 6：`docs/artifacts/sensorhost_sd_export_progress.png`，说明 EXPORT PROGRESS 和 CANCEL。
-- 图 7：`docs/artifacts/sensorhost_playback_controls.png`，说明本地导出文件打开后的回放控制条。
+- 图 1：`docs/artifacts/pc_hotspot_ip_setup.jpg`，说明 Windows 网卡 IPv4 设置入口。
+- 图 2：`docs/artifacts/sensorhost_wifi_connection.png`，标注 WI-FI FIELD MODE、顶部连接区、采集工具栏和主页面。
+- 图 3：`docs/artifacts/sensorhost_wifi_live.png`，用于说明 Wi-Fi 监听状态、在线节点、LIVE TARGET=UART、START、三轴波形和 Stream Health。
+- 图 4：`docs/artifacts/sensorhost_wifi_diagnostics.png`，说明 Wi-Fi 节点的 DIAGNOSTICS 用于看帧数、CRC、UART 错误和设备状态。
+- 图 5：`docs/artifacts/sensorhost_wifi_console.png`，说明 CONSOLE 用于看监听、节点和设备命令回复。
+- 图 6：`docs/artifacts/sensorhost_sd_archive_overview.png`，说明 SD ARCHIVE 页面中的设备存档、本地导出库和操作按钮。
+- 图 7：`docs/artifacts/sensorhost_sd_export_progress.png`，说明 EXPORT PROGRESS 和 CANCEL。
+- 图 8：`docs/artifacts/sensorhost_playback_controls.png`，说明本地导出文件打开后的回放控制条。
 - SD 卡部分：制作一张低复杂度的黑白/青色流程图，表达“设备 SD 卡 → EXPORT SELECTED → 电脑本地导出文件 → OPEN FOR PLAYBACK”，并在旁边注明不支持反向上传。
 
 ## 版式

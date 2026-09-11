@@ -28,8 +28,8 @@ OUTPUT_DIR = ROOT / "docs" / "artifacts"
 CAPTURE_DATA = ROOT / "build" / "guide_capture_data"
 DEVICE_UUID = UUID("49005000-0e50-8731-9432-39203731a4f8")
 NODE_ID = "guide-node-1"
-LOCAL_IPV4 = "192.168.43.100"
-PEER_IPV4 = "192.168.43.20"
+LOCAL_IPV4 = "192.168.137.201"
+PEER_IPV4 = "192.168.137.202"
 
 
 def prepare_local_export() -> Path:
@@ -209,7 +209,7 @@ def capture_wifi_screens(window: MainWindow) -> None:
     window.console_view.transcript.clear()
     window.console_view.set_current_node(NODE_ID)
     window.console_view.append_local(
-        "Wi-Fi listener active at 192.168.43.100:54321; UDP wake 12345"
+        f"Wi-Fi listener active at {LOCAL_IPV4}:54321; UDP wake 12345"
     )
     window.console_view.append_response("+UUID:49005000-0e50-8731-9432-39203731A4F8")
     window.console_view.append_response("+STATE:ACQUIRE")
