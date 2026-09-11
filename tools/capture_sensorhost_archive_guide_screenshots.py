@@ -7,7 +7,7 @@ from pathlib import Path
 from uuid import UUID
 
 import numpy as np
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QLabel
 
 from sensor_host.acquisition import (
     AcquisitionHealth,
@@ -29,7 +29,7 @@ CAPTURE_DATA = ROOT / "build" / "guide_capture_data"
 DEVICE_UUID = UUID("49005000-0e50-8731-9432-39203731a4f8")
 NODE_ID = "guide-node-1"
 LOCAL_IPV4 = "192.168.43.100"
-ESP_IPV4 = "192.168.43.20"
+PEER_IPV4 = "192.168.43.20"
 
 
 def prepare_local_export() -> Path:
@@ -56,7 +56,7 @@ def build_node() -> NodeSummary:
     return NodeSummary(
         node_id=NODE_ID,
         transport_kind=TransportKind.WIFI,
-        peer=ESP_IPV4,
+        peer=PEER_IPV4,
         connection_state=ConnectionState.STREAMING,
         device_uuid=DEVICE_UUID,
         alias="Field Node A",
@@ -149,6 +149,20 @@ def build_snapshot():
     )
 
 
+def sanitize_wifi_labels(window: MainWindow) -> None:
+    """Use neutral labels in guide screenshots without changing the product UI."""
+    replacements = {
+        "PC IPv4 PRESET IN ESP FIRMWARE": "PC IPv4 PRESET IN DEVICE CONFIG",
+        "OPTIONAL ESP IPv4 TARGETS": "OPTIONAL DEVICE IPv4 TARGETS",
+        "PC and every ESP must join the same phone hotspot. The selected PC IPv4 must match the address compiled into each ESP. If no gateway connects, check hotspot client isolation and allow inbound TCP in Windows Firewall.": (
+            "PC and every device must join the same phone hotspot. The selected PC IPv4 must match the address configured on the device side. If no gateway connects, check hotspot client isolation and allow inbound TCP in Windows Firewall."
+        ),
+    }
+    for label in window.wifi_panel.findChildren(QLabel):
+        if label.text() in replacements:
+            label.setText(replacements[label.text()])
+
+
 def setup_window(app: QApplication) -> MainWindow:
     window = MainWindow()
     window.resize(1440, 900)
@@ -159,9 +173,10 @@ def setup_window(app: QApplication) -> MainWindow:
     window.wifi_panel.expected_ipv4_edit.setText(LOCAL_IPV4)
     window.wifi_panel.tcp_port_spin.setValue(54321)
     window.wifi_panel.udp_port_spin.setValue(12345)
-    window.wifi_panel.wake_targets_edit.setText(ESP_IPV4)
+    window.wifi_panel.wake_targets_edit.setText(PEER_IPV4)
     window.live_target_combo.setCurrentText("UART")
     window.workspace_splitter.setSizes([315, 1125])
+    sanitize_wifi_labels(window)
     return window
 
 

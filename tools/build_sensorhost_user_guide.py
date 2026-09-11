@@ -364,14 +364,14 @@ def build_doc() -> None:
 
     add_body(doc, "本指南面向第一次使用 SensorHost 的现场操作人员，主线按 Wi-Fi 连接方式编写。按下面的顺序操作，即可完成网络连接、查看实时数据、保存记录，并把设备 SD 卡中的历史数据导出到电脑。")
     add_heading(doc, "最短上手路径", 1)
-    add_step(doc, 1, "准备网络。", "让电脑和每个 ESP 网关加入同一个手机热点，确认热点允许设备之间通信。")
+    add_step(doc, 1, "准备网络。", "让电脑和每个设备网关加入同一个手机热点，确认热点允许设备之间通信。")
     add_step(doc, 2, "启动监听。", "选择 WI-FI，填写热点网卡、PC IPv4 和端口，点击 CONNECT，看到 LISTENING。")
     add_step(doc, 3, "开始采集。", "在 DEVICES 中选中在线节点，将 LIVE TARGET 设为 UART，点击 START。")
     add_step(doc, 4, "查看波形。", "在 LIVE MONITOR 中观察 X、Y、Z 三轴曲线和姿态数据。")
     add_step(doc, 5, "保存或导出。", "点击 RECORD 保存实时数据；需要导出 SD 历史数据时，先 STOP，再进入 SD ARCHIVE。")
     add_heading(doc, "使用前准备", 1)
-    add_bullet(doc, "电脑已连接手机热点或现场 Wi-Fi；每个 ESP 网关也加入同一个网络。")
-    add_bullet(doc, "已知 ESP 固件中预设的 PC IPv4；上位机选择的热点网卡 IPv4 必须与它一致。")
+    add_bullet(doc, "电脑已连接手机热点或现场 Wi-Fi；每个设备网关也加入同一个网络。")
+    add_bullet(doc, "已知设备端配置中预设的 PC IPv4；上位机选择的热点网卡 IPv4 必须与它一致。")
     add_bullet(doc, "默认 TCP 端口为 54321、UDP 唤醒端口为 12345；只有端口被修改时才需要改动。")
     add_warning(doc, "Wi-Fi 模式下 CONNECT 启动的是电脑端监听，不会自动启动设备采集。看到节点在线后，还要选择 LIVE TARGET=UART 并点击 START。CDC 仅用于单机调试。")
 
@@ -384,10 +384,10 @@ def build_doc() -> None:
         ["功能区", "主要用途"],
         [
             ["顶部连接区", "选择 WI-FI 或调试用 CDC；Wi-Fi 时显示监听状态，使用 REFRESH、CONNECT / DISCONNECT。"],
-            ["WI-FI FIELD MODE", "选择手机热点网卡，填写 PC IPv4、TCP/UDP 端口和可选 ESP IPv4 目标。"],
+            ["WI-FI FIELD MODE", "选择手机热点网卡，填写 PC IPv4、TCP/UDP 端口和可选设备 IPv4 目标。"],
             ["采集工具栏", "设置 WINDOW、FIFO WM、LIVE TARGET，使用 START、STOP、PAUSE、RECORD。"],
             ["DEVICES", "查看在线或离线节点、对端 IP 和状态；点击在线节点可切换当前目标。"],
-            ["LIVE MONITOR", "查看 IIS3DWB 三轴振动曲线、JY61PL 姿态和 Stream Health。"],
+            ["LIVE MONITOR", "查看三轴振动曲线、姿态和 Stream Health。"],
             ["DIAGNOSTICS", "查看解析器、链路、固件和存储计数器。"],
             ["CONSOLE", "查看设备回复，必要时发送高级 AT 命令。"],
             ["SD ARCHIVE", "查看设备 SD 存档，执行导出，并在本地导出库中打开回放。"],
@@ -397,19 +397,19 @@ def build_doc() -> None:
 
     # Page 3: connection.
     add_heading(doc, "2 连接 Wi-Fi 设备", 1, page_break_before=True)
-    add_body(doc, "Wi-Fi 模式下，上位机在电脑端监听 TCP，ESP 网关主动连接上位机。监听建立后，可在 DEVICES 中同时查看多个网关节点。")
+    add_body(doc, "Wi-Fi 模式下，上位机在电脑端监听 TCP，设备网关主动连接上位机。监听建立后，可在 DEVICES 中同时查看多个网关节点。")
     add_picture(doc, LIVE_SCREENSHOT, 6.65, "图 2  Wi-Fi 监听已启动并显示在线节点")
-    add_step(doc, 1, "准备同一网络。", "电脑和每个 ESP 网关加入同一个手机热点；关闭热点的客户端隔离，并允许 Windows 防火墙接收上位机 TCP 入站连接。")
+    add_step(doc, 1, "准备同一网络。", "电脑和每个设备网关加入同一个手机热点；关闭热点的客户端隔离，并允许 Windows 防火墙接收上位机 TCP 入站连接。")
     add_step(doc, 2, "选择 WI-FI。", "在顶部通路下拉框选择 WI-FI，左侧显示 WI-FI FIELD MODE 配置区。")
     add_step(doc, 3, "选择热点网卡。", "在 PHONE HOTSPOT INTERFACE 中选择手机热点对应的 IPv4 网卡，例如 192.168.43.100/24。")
-    add_step(doc, 4, "核对 PC IPv4。", "PC IPv4 PRESET IN ESP FIRMWARE 必须填写与所选网卡相同的地址；这不是随意填写的设备 IP。")
-    add_step(doc, 5, "核对端口。", "默认 TCP LISTEN PORT 为 54321、UDP WAKE PORT 为 12345；如 ESP 固件使用其他值，按固件配置填写。")
-    add_step(doc, 6, "启动监听。", "点击 CONNECT，右上角显示 LISTENING <PC IPv4>:<TCP 端口>。ESP 网关会主动连入；必要时可填写 OPTIONAL ESP IPv4 TARGETS 发送定向唤醒。")
+    add_step(doc, 4, "核对 PC IPv4。", "PC IPv4 PRESET IN DEVICE CONFIG 必须填写与所选网卡相同的地址；这不是随意填写的设备 IP。")
+    add_step(doc, 5, "核对端口。", "默认 TCP LISTEN PORT 为 54321、UDP WAKE PORT 为 12345；如设备端配置使用其他值，按设备端配置填写。")
+    add_step(doc, 6, "启动监听。", "点击 CONNECT，右上角显示 LISTENING <PC IPv4>:<TCP 端口>。设备网关会主动连入；必要时可填写 OPTIONAL DEVICE IPv4 TARGETS 发送定向唤醒。")
     add_step(doc, 7, "选择节点并采集。", "等待 DEVICES 出现在线节点，点击目标行；将 LIVE TARGET 设为 UART，点击 START，等待 CONSOLE 返回 OK。")
 
     # Page 4: waveform and health.
     add_heading(doc, "3 查看波形和判断是否正常", 1, page_break_before=True)
-    add_body(doc, "采集开始后，LIVE MONITOR 是最常用页面。Wi-Fi 数据经过 ESP 网关转发到电脑；中间的大图是 IIS3DWB 三轴振动，右侧是 JY61PL 姿态和加速度。")
+    add_body(doc, "采集开始后，LIVE MONITOR 是最常用页面。Wi-Fi 数据经过设备网关转发到电脑；中间的大图是三轴振动，右侧是姿态和加速度。")
     add_heading(doc, "实时波形区", 2)
     add_bullet(doc, "X、Y、Z：分别显示三个方向的振动曲线；点击曲线按钮可隐藏或显示对应通道。")
     add_bullet(doc, "WINDOW：改变图表显示的时间范围，不影响后台记录文件。")
@@ -489,7 +489,7 @@ def build_doc() -> None:
     add_warning(doc, "只关闭串口或直接退出程序不能替代 STOP；设备端可能仍保持采集状态或原来的实时目标。")
 
     add_heading(doc, "9 常见提示", 1)
-    add_bullet(doc, "监听已启动但没有节点：确认电脑和 ESP 在同一热点、PC IPv4 与 ESP 固件预设值一致、热点未启用客户端隔离，并允许 TCP 入站；必要时在 OPTIONAL ESP IPv4 TARGETS 填写地址后重试。")
+    add_bullet(doc, "监听已启动但没有节点：确认电脑和设备网关在同一热点、PC IPv4 与设备端配置预设值一致、热点未启用客户端隔离，并允许 TCP 入站；必要时在 OPTIONAL DEVICE IPv4 TARGETS 填写地址后重试。")
     add_bullet(doc, "节点已在线但无曲线：确认选中了在线节点，LIVE TARGET=UART，且已点击 START；再看 DIAGNOSTICS 的帧数、UART ERR 和 TRANSPORT DROP 是否增加。")
     add_bullet(doc, "CDC 调试出现 ERROR:STATE：仅在 USB 调试时按 STOP → 等待 IDLE / OK → 选择 CDC → START 的顺序重试。")
     add_bullet(doc, "不确定当前发生了什么：打开 CONSOLE 查看最近的 OK、ERROR、+STATE 和 EXPORT_* 回复。")

@@ -6,7 +6,7 @@
 
 ## 读者与范围
 
-- 读者：需要使用 SensorHost 上位机查看 STM32F407 传感器数据的现场操作人员。
+- 读者：需要使用 SensorHost 上位机查看采集设备数据的现场操作人员。
 - 输出：`docs/SensorHost上位机操作指南.docx`，页数以内容完整和图片清晰为准，不设固定页数上限。
 - 语气：短句、按按钮和界面区域说明，不展开协议、源码和完整故障诊断。
 - 范围：WI-FI 现场模式为主，覆盖 LIVE MONITOR、DIAGNOSTICS、CONSOLE、DEVICE SD RECORDS 和 LOCAL EXPORT LIBRARY 的基础用途；CDC 仅作为单机调试入口一笔带过。
