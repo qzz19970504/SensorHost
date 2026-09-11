@@ -245,6 +245,19 @@ class ArchiveView(QWidget):
     def on_export_finished(self, node_id: str, phase: str, path: str) -> None:
         """Show the terminal export state and rescan the local library."""
         del node_id
+        if phase == "COMPLETE":
+            self.progress_bar.setRange(0, 1000)
+            self.progress_bar.setValue(self.progress_bar.maximum())
+            try:
+                bytes_written = Path(path).stat().st_size
+            except OSError:
+                bytes_written = None
+            if bytes_written is None:
+                self.progress_bytes_label.setText("export complete")
+            else:
+                self.progress_bytes_label.setText(
+                    f"{_human_bytes(bytes_written)} written · export complete"
+                )
         self.progress_status_label.setText(f"STATUS {phase}")
         self.progress_hint_label.setText(f"saved to {path}")
         self.cancel_button.setEnabled(False)
@@ -373,11 +386,12 @@ class ArchiveView(QWidget):
         node_id: str,
         active: bool,
         written: int,
-        total: int,
+        allocated_total: int,
         phase: str | None,
     ) -> None:
         now_ms = self._now_ms()
         if active:
+            self.progress_bar.setRange(0, 0)
             if self._last_bytes_ms:
                 elapsed_s = (now_ms - self._last_bytes_ms) / 1000.0
                 if elapsed_s > 0.0:
@@ -388,12 +402,11 @@ class ArchiveView(QWidget):
                     )
             self._last_bytes = written
             self._last_bytes_ms = now_ms
-            ratio = min(1.0, written / total) if total > 0 else 0.0
-            self.progress_bar.setValue(int(round(ratio * 1000)))
             elapsed_s = (now_ms - self._export_started_ms) / 1000.0
             self.progress_status_label.setText(f"STATUS {phase or 'IN PROGRESS'}")
             self.progress_bytes_label.setText(
-                f"{_human_bytes(written)} / {_human_bytes(total)} · "
+                f"{_human_bytes(written)} received · "
+                f"SD allocation {_human_bytes(allocated_total)} · "
                 f"{_human_bytes(int(self._speed_bytes_per_s))}/s · "
                 f"elapsed {elapsed_s:,.1f} s"
             )
@@ -401,9 +414,9 @@ class ArchiveView(QWidget):
                 f"exporting {node_id}; the device SD ring clears as chunks transmit"
             )
             return
-        self.progress_bar.setValue(self.progress_bar.maximum())
+        self.progress_bar.setRange(0, 0)
         self.progress_bytes_label.setText(
-            f"{_human_bytes(written)} / {_human_bytes(total)} · "
+            f"{_human_bytes(written)} received · "
             f"{_human_bytes(int(self._speed_bytes_per_s))}/s"
         )
         self.progress_status_label.setText(f"STATUS {phase or 'IDLE'}")

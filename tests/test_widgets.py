@@ -1121,13 +1121,17 @@ def test_archive_view_shows_export_progress_and_completion(qtbot) -> None:
     view.set_controller(stub)
 
     assert view.progress_status_label.text() == "STATUS IN_PROGRESS"
-    assert view.progress_bar.value() == 500
-    assert "50 B / 100 B" in view.progress_bytes_label.text()
+    assert view.progress_bar.minimum() == 0
+    assert view.progress_bar.maximum() == 0
+    assert "50 B received" in view.progress_bytes_label.text()
     assert view.cancel_button.isEnabled()
 
     view.on_export_finished("node-1", "COMPLETE", "exports/export-001.sdf1")
 
     assert view.progress_status_label.text() == "STATUS COMPLETE"
+    assert view.progress_bar.minimum() == 0
+    assert view.progress_bar.maximum() == 1000
+    assert view.progress_bar.value() == 1000
     assert not view.cancel_button.isEnabled()
     assert "export-001.sdf1" in view.progress_hint_label.text()
 
