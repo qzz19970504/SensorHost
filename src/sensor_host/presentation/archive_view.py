@@ -49,6 +49,10 @@ _MOVE_SEMANTICS_WARNING = (
     "from the device SD ring once transmitted. After a successful export the SD "
     "ring is empty and the local file becomes the only archive copy. Continue?"
 )
+_CLEAR_SD_WARNING = (
+    "This permanently clears the device SD ring, removes all retained archive "
+    "data, and resets its sequence. The operation cannot be undone. Continue?"
+)
 
 
 def _human_bytes(value: int | None) -> str:
@@ -116,6 +120,7 @@ class ArchiveView(QWidget):
 
     export_requested = pyqtSignal(str)
     cancel_requested = pyqtSignal(str)
+    clear_requested = pyqtSignal(str)
     refresh_requested = pyqtSignal()
     open_requested = pyqtSignal(object)
 
@@ -260,11 +265,15 @@ class ArchiveView(QWidget):
         actions_layout = QHBoxLayout(actions)
         actions_layout.setContentsMargins(0, 0, 0, 0)
         actions_layout.setSpacing(SPACE.compact)
+        self.clear_button = QPushButton("CLEAR SD")
+        self.clear_button.setProperty("role", "danger")
+        self.clear_button.clicked.connect(self._confirm_clear)
         self.record_refresh_button = QPushButton("REFRESH")
         self.record_refresh_button.clicked.connect(self._emit_refresh)
         self.export_button = QPushButton("EXPORT SELECTED")
         self.export_button.setProperty("role", "primary")
         self.export_button.clicked.connect(self._confirm_export)
+        actions_layout.addWidget(self.clear_button)
         actions_layout.addWidget(self.record_refresh_button)
         actions_layout.addWidget(self.export_button)
         card, layout = _card("DEVICE SD RECORDS", actions)
@@ -413,6 +422,21 @@ class ArchiveView(QWidget):
         if answer != QMessageBox.StandardButton.Yes:
             return
         self.export_requested.emit(node_id)
+
+    def _confirm_clear(self) -> None:
+        node_id = self._selected_record_node()
+        if node_id is None:
+            return
+        answer = QMessageBox.warning(
+            self,
+            "CLEAR DEVICE SD",
+            _CLEAR_SD_WARNING,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.clear_requested.emit(node_id)
 
     def _emit_refresh(self) -> None:
         self.refresh_requested.emit()

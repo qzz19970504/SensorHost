@@ -137,6 +137,10 @@ class AcquisitionController:
             raise ValueError("export target must be UART or CDC")
         self.enqueue_command(f"AT+EXPORT={normalized}")
 
+    def clear_sd(self) -> None:
+        """Queue the firmware's confirmed destructive SD-ring clear command."""
+        self.enqueue_command("AT+SDCLEAR=CONFIRM")
+
     def set_recorder(self, recorder: RawSessionRecorder | None) -> None:
         """Attach or detach an already-started recorder at a chunk boundary."""
         with self._recorder_lock:

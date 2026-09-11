@@ -2,6 +2,7 @@
 
 from .base import DeviceDescriptor, Transport, TransportError
 from .cdc_serial import CdcSerialTransport
+from .fake import FakeTransport
 from .gateway import (
     DEFAULT_MAXIMUM_CLIENTS,
     DEFAULT_TCP_PORT,
@@ -22,6 +23,7 @@ __all__ = [
     "DEFAULT_UDP_PORT",
     "DeviceDescriptor",
     "GatewayListener",
+    "FakeTransport",
     "Transport",
     "TransportError",
     "UdpWakeService",
