@@ -129,6 +129,24 @@ class CdcSerialTransport:
                 f"{bytes_written}/{len(encoded_line)} bytes"
             )
 
+    def write_raw(self, data: bytes) -> None:
+        """Write raw bytes verbatim for a binary OTA frame (no ASCII framing)."""
+        payload = bytes(data)
+        if not payload:
+            raise ValueError("raw write must contain at least one byte")
+        serial_port = self._require_open_port()
+        try:
+            bytes_written = serial_port.write(payload)
+        except (serial.SerialException, OSError) as error:
+            raise TransportError(
+                f"cannot write CDC endpoint {self._device_id}: {error}"
+            ) from error
+        if bytes_written != len(payload):
+            raise TransportError(
+                f"short CDC raw write on {self._device_id}: "
+                f"{bytes_written}/{len(payload)} bytes"
+            )
+
     def _require_open_port(self) -> _SerialPort:
         if self._serial_port is None:
             raise TransportError("CDC endpoint is not open")

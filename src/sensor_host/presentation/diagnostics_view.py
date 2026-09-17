@@ -126,6 +126,10 @@ class DiagnosticsView(QWidget):
                 "diag_cdc_ctrl",
                 "diag_cdc_export",
                 "stop_reason",
+                "ota_state",
+                "ota_received",
+                "ota_total",
+                "ota_error",
             ),
         )
         self._add_section(

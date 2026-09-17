@@ -9,6 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from uuid import UUID
 
 from PyQt6.QtCore import QObject, QSettings, QThread, QTimer, Qt, pyqtSignal, pyqtSlot
 
@@ -20,6 +21,16 @@ from sensor_host.acquisition import (
     NodeSummary,
     RealtimeSampleStore,
     TransportKind,
+)
+from sensor_host.ota import (
+    TARGET_ID,
+    OtaPackageError,
+    OtaUploadCancelled,
+    OtaUploadError,
+    OtaUploader,
+    describe_nack,
+    format_crc,
+    load_package,
 )
 from sensor_host.storage import RawSessionRecorder
 from sensor_host.storage.paths import data_root
@@ -40,6 +51,10 @@ _MAXIMUM_DISPLAY_POINTS = 5_000
 _IIS_SAMPLE_RATE_HZ = 26_667.0
 _EXPORT_FIRST_BYTE_TIMEOUT_S = 10.0
 _EXPORT_AUTO_RETRIES = 1
+_OTA_RECONNECT_POLL_MS = 1_000
+_OTA_RECONNECT_TIMEOUT_S = 60.0
+_OTA_ACK_TIMEOUT_S = 2.0
+_OTA_COMMIT_TIMEOUT_S = 30.0
 _SAFE_PATH_PATTERN = re.compile(r"[^A-Za-z0-9._-]+")
 
 
@@ -94,6 +109,70 @@ class GatewayAcceptWorker(QObject):
             self.stopped.emit()
 
 
+class _ControllerOtaAdapter:
+    """Bridge the OtaUploader transport contract to one AcquisitionController."""
+
+    def __init__(self, acquisition: AcquisitionController) -> None:
+        self._acquisition = acquisition
+
+    def send(self, data: bytes) -> None:
+        self._acquisition.send_ota_frame(data)
+
+    def readline(self, timeout: float) -> bytes | None:
+        return self._acquisition.next_ota_reply(timeout)
+
+
+class OtaUploadWorker(QObject):
+    """Drive one OTA upload off the GUI thread over a session's OTA bridge."""
+
+    progress = pyqtSignal(str, int, int, str)
+    staged = pyqtSignal(str, object)
+    failed = pyqtSignal(str, str, str)
+    cancelled = pyqtSignal(str)
+    stopped = pyqtSignal()
+
+    def __init__(
+        self,
+        node_id: str,
+        acquisition: AcquisitionController,
+        package: bytes,
+        cancel_event: threading.Event,
+    ) -> None:
+        super().__init__()
+        self._node_id = node_id
+        self._acquisition = acquisition
+        self._package = package
+        self._cancel_event = cancel_event
+
+    @pyqtSlot()
+    def run(self) -> None:
+        adapter = _ControllerOtaAdapter(self._acquisition)
+        uploader = OtaUploader(
+            ack_timeout=_OTA_ACK_TIMEOUT_S,
+            commit_timeout=_OTA_COMMIT_TIMEOUT_S,
+            cancel_requested=self._cancel_event.is_set,
+        )
+        try:
+            result = uploader.upload(
+                package=self._package,
+                transport=adapter,
+                expected_target_id=TARGET_ID,
+                progress=lambda sent, total, phase: self.progress.emit(
+                    self._node_id, sent, total, phase
+                ),
+            )
+        except OtaUploadCancelled:
+            self.cancelled.emit(self._node_id)
+        except OtaUploadError as error:
+            self.failed.emit(self._node_id, error.code or "", str(error))
+        except Exception as error:  # task boundary: unexpected failures reach the UI
+            self.failed.emit(self._node_id, "", str(error))
+        else:
+            self.staged.emit(self._node_id, result)
+        finally:
+            self.stopped.emit()
+
+
 @dataclass
 class _ManagedSession:
     node_id: str
@@ -115,6 +194,8 @@ class _ManagedSession:
     archive_retries: int = 0
     archive_cancel_requested: bool = False
     failure: str | None = None
+    ota_active: bool = False
+    ota_awaiting_restart: bool = False
 
 
 @dataclass(frozen=True)
@@ -151,6 +232,10 @@ class AppController(QObject):
     display_clear_requested = pyqtSignal()
     export_started = pyqtSignal(str, str, int)
     export_finished = pyqtSignal(str, str, str)
+    ota_progress = pyqtSignal(str, int, int, str)
+    ota_staged = pyqtSignal(str, str, str, bool)
+    ota_state = pyqtSignal(str, str, str)
+    ota_availability = pyqtSignal(bool, str)
 
     def __init__(
         self,
@@ -189,6 +274,17 @@ class AppController(QObject):
         self._status_timer = QTimer(self)
         self._status_timer.setInterval(_STATUS_INTERVAL_MS)
         self._status_timer.timeout.connect(self._request_status)
+        self._ota_reconnect: dict[str, object] | None = None
+        self._ota_reconnect_timer = QTimer(self)
+        self._ota_reconnect_timer.setInterval(_OTA_RECONNECT_POLL_MS)
+        self._ota_reconnect_timer.timeout.connect(self._poll_ota_reconnect)
+        # Controller-level OTA tracking survives a session teardown so the
+        # expected post-STAGED reset disconnect is never reported as a failure.
+        self._ota_node_id: str | None = None
+        self._ota_thread: QThread | None = None
+        self._ota_worker: "OtaUploadWorker | None" = None
+        self._ota_cancel_event: threading.Event | None = None
+        self._ota_context: dict[str, object] | None = None
 
     @property
     def is_running(self) -> bool:
@@ -362,6 +458,10 @@ class AppController(QObject):
         self._stop_wifi_resources()
         self._timer.stop()
         self._status_timer.stop()
+        self._ota_reconnect_timer.stop()
+        self._ota_reconnect = None
+        if self._ota_cancel_event is not None:
+            self._ota_cancel_event.set()
         sessions = list(self._sessions.values())
         for session in sessions:
             self._update_recorder_disconnect_metadata(session, "user_disconnect")
@@ -377,6 +477,8 @@ class AppController(QObject):
             session.worker.deleteLater()
             session.thread.deleteLater()
             self._session_index.remove(session.node_id)
+        self._teardown_ota_worker()
+        self._clear_ota_context()
         self._sessions.clear()
         self._selected_node_id = None
         self._recording_active = False
@@ -395,6 +497,7 @@ class AppController(QObject):
         self._selected_node_id = node_id
         self.selected_node_changed.emit(node_id)
         self._publish_selected_session()
+        self._emit_ota_availability()
 
     @pyqtSlot(str)
     def remove_offline_node(self, node_id: str) -> None:
@@ -453,6 +556,9 @@ class AppController(QObject):
         session = self._sessions.get(node_id)
         if session is None:
             self.error_raised.emit(f"unknown node: {node_id}")
+            return
+        if session.ota_active or session.ota_awaiting_restart:
+            self.error_raised.emit("OTA in progress; acquisition start is blocked")
             return
         session.acquisition.start_acquisition()
 
@@ -576,6 +682,9 @@ class AppController(QObject):
         if session is None:
             self.error_raised.emit(f"unknown node: {node_id}")
             return
+        if session.ota_active or session.ota_awaiting_restart:
+            self.error_raised.emit("OTA in progress; export is blocked")
+            return
         if session.archive_recorder is not None:
             self.error_raised.emit("an archive export is already active for this node")
             return
@@ -662,6 +771,263 @@ class AppController(QObject):
             return (False, 0, session.archive_total_bytes, phase)
         return (True, recorder.bytes_written, session.archive_total_bytes, phase)
 
+    def ota_active_node(self) -> str | None:
+        """Return the node with an OTA upload or post-staged reconnect active."""
+        return self._ota_node_id
+
+    def ota_in_progress(self, node_id: str) -> bool:
+        """Return whether OTA owns the given node (uploading or awaiting reboot)."""
+        session = self._sessions.get(node_id)
+        if session is not None and (session.ota_active or session.ota_awaiting_restart):
+            return True
+        return self._ota_node_id == node_id
+
+    def start_ota_for(self, node_id: str, package_path: str | Path) -> None:
+        """Validate guards, self-check the package, and start one OTA upload."""
+        session = self._sessions.get(node_id)
+        if session is None:
+            self.error_raised.emit(f"unknown node: {node_id}")
+            return
+        if session.transport_kind is not TransportKind.WIFI:
+            message = (
+                "OTA 仅支持 UART 来源链路（Wi-Fi 网关）；"
+                "CDC 会话会被固件以 ERROR:SOURCE 拒绝"
+            )
+            self.ota_state.emit(node_id, "SOURCE_REJECTED", message)
+            self.error_raised.emit(message)
+            return
+        if self._ota_node_id is not None:
+            self.error_raised.emit("an OTA session is already in progress")
+            return
+        if session.archive_recorder is not None:
+            self.error_raised.emit("cancel the active export before starting OTA")
+            return
+        if self._recording_active:
+            self.error_raised.emit("stop recording before starting OTA")
+            return
+        state = session.store.snapshot(1.0, 2).firmware_control_state
+        if state is None:
+            self.error_raised.emit("refresh device status before starting OTA")
+            return
+        if not state.sd_ready or state.sd_format_required:
+            self.error_raised.emit(
+                "device SD must be READY and not require format before OTA"
+            )
+            return
+        try:
+            package = load_package(package_path)
+        except (OtaPackageError, OSError) as error:
+            self.ota_state.emit(node_id, "PACKAGE_REJECTED", str(error))
+            self.error_raised.emit(str(error))
+            return
+        if state.acquisition_state == "ACQUIRE":
+            self.ota_state.emit(
+                node_id,
+                "STOPPING_ACQUISITION",
+                "设备正在采集，固件将先停止采集再进入 OTA",
+            )
+        summary = self._session_index.summary(node_id)
+        cancel_event = threading.Event()
+        session.ota_active = True
+        self._ota_node_id = node_id
+        self._ota_cancel_event = cancel_event
+        self._ota_context = {
+            "node_id": node_id,
+            "kind": session.transport_kind,
+            "device_uuid": summary.device_uuid,
+            "device_id": session.peer,
+            "version": package.version_text,
+            "crc": package.crc_text,
+        }
+        session.acquisition.start_ota()
+        thread = QThread(self)
+        worker = OtaUploadWorker(
+            node_id, session.acquisition, package.data, cancel_event
+        )
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.progress.connect(self._on_ota_progress)
+        worker.staged.connect(self._on_ota_staged)
+        worker.failed.connect(self._on_ota_failed)
+        worker.cancelled.connect(self._on_ota_cancelled)
+        worker.stopped.connect(thread.quit, Qt.ConnectionType.DirectConnection)
+        self._ota_thread = thread
+        self._ota_worker = worker
+        thread.start()
+        self.ota_state.emit(node_id, "STARTED", f"开始上传 {Path(package_path).name}")
+        self._emit_ota_availability()
+
+    def cancel_ota_for(self, node_id: str) -> None:
+        """Request cooperative cancellation; the uploader sends a CANCEL frame."""
+        if self._ota_node_id == node_id and self._ota_cancel_event is not None:
+            self._ota_cancel_event.set()
+
+    @pyqtSlot(str, int, int, str)
+    def _on_ota_progress(self, node_id: str, sent: int, total: int, phase: str) -> None:
+        self.ota_progress.emit(node_id, sent, total, phase)
+
+    @pyqtSlot(str, object)
+    def _on_ota_staged(self, node_id: str, result: object) -> None:
+        payload = result if isinstance(result, dict) else {}
+        staged_version = str(payload.get("staged_version") or "")
+        staged_crc = payload.get("staged_crc")
+        staged_crc_text = format_crc(staged_crc) if isinstance(staged_crc, int) else ""
+        context = self._ota_context or {}
+        expected_version = str(context.get("version") or "")
+        expected_crc = str(context.get("crc") or "")
+        session = self._sessions.get(node_id)
+        if session is not None:
+            session.ota_active = False
+            session.ota_awaiting_restart = True
+            session.acquisition.end_ota()
+        matches = (
+            staged_version == expected_version and staged_crc_text == expected_crc
+        )
+        self.ota_staged.emit(node_id, staged_version, staged_crc_text, matches)
+        if not matches:
+            self.error_raised.emit(
+                "设备回读的 STAGED 与本地包不一致（设备 "
+                f"{staged_version}/{staged_crc_text} vs 本地 "
+                f"{expected_version}/{expected_crc}）"
+            )
+        self.ota_state.emit(
+            node_id,
+            "WAIT_RESTART",
+            "镜像已暂存，设备将自动复位并从 SD 安装；等待设备重启…",
+        )
+        self._teardown_ota_worker()
+        self._arm_ota_reconnect()
+        self._emit_ota_availability()
+
+    @pyqtSlot(str, str, str)
+    def _on_ota_failed(self, node_id: str, code: str, message: str) -> None:
+        session = self._sessions.get(node_id)
+        if session is not None:
+            session.ota_active = False
+            session.acquisition.end_ota()
+        self._teardown_ota_worker()
+        self._clear_ota_context()
+        detail = describe_nack(code) if code else message
+        self.ota_state.emit(node_id, "FAILED", detail)
+        self.error_raised.emit(
+            f"OTA 失败：{detail}（{message}）" if code else f"OTA 失败：{message}"
+        )
+        self._emit_ota_availability()
+
+    @pyqtSlot(str)
+    def _on_ota_cancelled(self, node_id: str) -> None:
+        session = self._sessions.get(node_id)
+        if session is not None:
+            session.ota_active = False
+            session.acquisition.end_ota()
+        self._teardown_ota_worker()
+        self._clear_ota_context()
+        self.ota_state.emit(node_id, "CANCELLED", "已发送 CANCEL，OTA 会话已取消")
+        self._emit_ota_availability()
+
+    def _teardown_ota_worker(self) -> None:
+        thread = self._ota_thread
+        worker = self._ota_worker
+        self._ota_thread = None
+        self._ota_worker = None
+        self._ota_cancel_event = None
+        if thread is not None:
+            thread.quit()
+            thread.wait(_THREAD_STOP_TIMEOUT_MS)
+            if worker is not None:
+                worker.deleteLater()
+            thread.deleteLater()
+
+    def _clear_ota_context(self) -> None:
+        self._ota_context = None
+        self._ota_node_id = None
+
+    def _arm_ota_reconnect(self) -> None:
+        context = self._ota_context
+        if context is None:
+            return
+        self._ota_reconnect = {
+            "kind": context["kind"],
+            "device_uuid": context["device_uuid"],
+            "device_id": context["device_id"],
+            "node_id": context["node_id"],
+            "deadline_s": time.monotonic() + _OTA_RECONNECT_TIMEOUT_S,
+        }
+        self._ota_reconnect_timer.start()
+
+    @pyqtSlot()
+    def _poll_ota_reconnect(self) -> None:
+        info = self._ota_reconnect
+        if info is None:
+            self._ota_reconnect_timer.stop()
+            return
+        if time.monotonic() > float(info["deadline_s"]):
+            self._finish_ota_reconnect(
+                "RECONNECT_TIMEOUT", "设备复位后未在预期时间内重连"
+            )
+            return
+        if info["kind"] is TransportKind.CDC and not self._sessions:
+            self._attempt_ota_cdc_reopen(str(info["device_id"] or ""))
+        expected_uuid = info["device_uuid"]
+        for session in self._sessions.values():
+            summary = self._session_index.summary(session.node_id)
+            if summary.connection_state not in (
+                ConnectionState.CONNECTED,
+                ConnectionState.STREAMING,
+            ):
+                continue
+            if expected_uuid is not None and summary.device_uuid != expected_uuid:
+                continue
+            session.acquisition.request_status()
+            state = session.store.snapshot(1.0, 2).firmware_control_state
+            if state is not None and state.ota_state in (None, "OFF"):
+                self._finish_ota_reconnect(
+                    "RECONNECTED", "设备已重连，OTA 状态 OFF，实时流恢复"
+                )
+                return
+
+    def _attempt_ota_cdc_reopen(self, device_id: str) -> None:
+        if not device_id or self._sessions or self.is_wifi_server_running:
+            return
+        transport = self._transport_factory()
+        try:
+            transport.open(device_id)
+        except (OSError, RuntimeError, ValueError):
+            transport.close()
+            return
+        self._add_session(
+            node_id=f"cdc:{device_id}",
+            peer=device_id,
+            transport_kind=TransportKind.CDC,
+            transport=transport,
+        )
+
+    def _finish_ota_reconnect(self, status: str, detail: str) -> None:
+        self._ota_reconnect_timer.stop()
+        info = self._ota_reconnect
+        self._ota_reconnect = None
+        node_id = str(info["node_id"]) if info else (self._ota_node_id or "")
+        self._clear_ota_context()
+        self.ota_state.emit(node_id, status, detail)
+        if status != "RECONNECTED":
+            self.error_raised.emit(detail)
+        self._emit_ota_availability()
+
+    def _emit_ota_availability(self) -> None:
+        if self._ota_node_id is not None:
+            self.ota_availability.emit(False, "OTA session in progress")
+            return
+        session = self._selected_session()
+        if session is None:
+            self.ota_availability.emit(False, "connect a Wi-Fi node to update firmware")
+            return
+        if session.transport_kind is not TransportKind.WIFI:
+            self.ota_availability.emit(
+                False, "OTA 仅支持 UART 来源链路（Wi-Fi 网关）"
+            )
+            return
+        self.ota_availability.emit(True, "")
+
     @pyqtSlot(bool)
     def set_display_paused(self, paused: bool) -> None:
         self._display_paused = paused
@@ -685,6 +1051,12 @@ class AppController(QObject):
                 self.error_raised.emit("connect before starting a recording")
                 return
             if self._recording_active:
+                return
+            if any(
+                session.ota_active or session.ota_awaiting_restart
+                for session in self._sessions.values()
+            ):
+                self.error_raised.emit("OTA in progress; recording is blocked")
                 return
             self._recording_active = True
             self._recording_batch_path = path or self._default_recording_batch_path()
@@ -743,7 +1115,7 @@ class AppController(QObject):
         for session in self._sessions.values():
             # Keep UART/CDC TX free for archive frames while an export runs;
             # status replies would contend for the same transmit path.
-            if session.archive_recorder is None:
+            if session.archive_recorder is None and not session.ota_active:
                 session.acquisition.request_status()
 
     def _consume_identity_updates(self, session: _ManagedSession) -> None:
@@ -766,7 +1138,14 @@ class AppController(QObject):
         if session is not None:
             session.failure = message
             self._update_recorder_disconnect_metadata(session, message)
-        if not self._is_stopping:
+        # A post-STAGED device reset drops the link on purpose; never surface it
+        # as an error while an OTA upload/reconnect owns this node.
+        ota_inflight = (
+            self._ota_context is not None
+            and self._ota_context.get("node_id") == node_id
+        )
+        awaiting_restart = session is not None and session.ota_awaiting_restart
+        if not self._is_stopping and not ota_inflight and not awaiting_restart:
             self.error_raised.emit(message)
 
     @pyqtSlot(str)
@@ -808,6 +1187,7 @@ class AppController(QObject):
 
     def _emit_nodes(self) -> None:
         self.nodes_changed.emit(self._session_index.summaries())
+        self._emit_ota_availability()
 
     def _start_session_recording(
         self,
