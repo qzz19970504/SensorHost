@@ -326,10 +326,30 @@ class StreamParser:
         self._last_sequence = sequence
 
     def feed(self, data: bytes | bytearray | memoryview) -> list[Frame]:
+        """Parse complete frames, advancing a cursor and compacting once.
+
+        Per-frame head deletion made draining a backlog quadratic (each delete
+        memmoves the remainder), which capped consumption far below the link
+        rate.  The cursor keeps parsing linear; the buffer is compacted once
+        per feed call.
+        """
         self._buffer.extend(data)
         frames: list[Frame] = []
+        view = self._buffer
+        total = len(view)
+        pos = 0
         while True:
-            if not self._discard_until_magic() or len(self._buffer) < HEADER_SIZE:
+            magic_at = view.find(MAGIC, pos)
+            if magic_at < 0:
+                keep = max(pos, total - (len(MAGIC) - 1))
+                if keep > pos:
+                    self.stats.bytes_discarded += keep - pos
+                pos = keep
+                break
+            if magic_at > pos:
+                self.stats.bytes_discarded += magic_at - pos
+                pos = magic_at
+            if total - pos < HEADER_SIZE:
                 break
             (
                 _magic,
@@ -342,39 +362,36 @@ class StreamParser:
                 timestamp_us,
                 item_count,
                 _reserved,
-            ) = _HEADER.unpack_from(self._buffer)
+            ) = _HEADER.unpack_from(view, pos)
+            invalid = False
             if (header_size < HEADER_SIZE) or (header_size > MAX_HEADER_SIZE):
-                del self._buffer[0]
+                invalid = True
                 self.stats.header_errors += 1
-                self.stats.bytes_discarded += 1
-                continue
-            if version == VERSION and header_size != HEADER_SIZE:
-                del self._buffer[0]
+            elif version == VERSION and header_size != HEADER_SIZE:
+                invalid = True
                 self.stats.header_errors += 1
-                self.stats.bytes_discarded += 1
-                continue
-            if version == DATA_VERSION and header_size != DATA_HEADER_SIZE:
-                del self._buffer[0]
+            elif version == DATA_VERSION and header_size != DATA_HEADER_SIZE:
+                invalid = True
                 self.stats.header_errors += 1
-                self.stats.bytes_discarded += 1
-                continue
-            if payload_size > MAX_PAYLOAD_SIZE:
-                del self._buffer[0]
+            elif payload_size > MAX_PAYLOAD_SIZE:
+                invalid = True
                 self.stats.length_errors += 1
+            if invalid:
+                pos += 1
                 self.stats.bytes_discarded += 1
                 continue
             frame_size = header_size + payload_size + CRC_SIZE
-            if len(self._buffer) < frame_size:
+            if total - pos < frame_size:
                 break
-            candidate = bytes(self._buffer[:frame_size])
+            candidate = bytes(view[pos : pos + frame_size])
             expected_crc = struct.unpack_from("<I", candidate, frame_size - CRC_SIZE)[0]
             actual_crc = zlib.crc32(candidate[:-CRC_SIZE]) & 0xFFFFFFFF
             if actual_crc != expected_crc:
-                del self._buffer[0]
+                pos += 1
                 self.stats.crc_errors += 1
                 self.stats.bytes_discarded += 1
                 continue
-            del self._buffer[:frame_size]
+            pos += frame_size
             if version not in (VERSION, DATA_VERSION):
                 self.stats.unknown_versions += 1
                 continue
@@ -413,6 +430,8 @@ class StreamParser:
                     self._record_sequence(sequence)
                 frames.append(frame)
                 self.stats.frames += 1
+        if pos:
+            del self._buffer[:pos]
         return frames
 
     def _decode_frame(
