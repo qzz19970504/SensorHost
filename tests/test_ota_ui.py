@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from PyQt6.QtWidgets import QMessageBox
+
 from sensor_host import app as sensor_host_app
 from sensor_host.ota.package import pack_ota
 from sensor_host.presentation.app_controller import AppController
@@ -148,3 +150,52 @@ def test_dialog_ignores_other_node_signals(qtbot, tmp_path) -> None:
     dialog.on_state("wifi-2", "FAILED", "boom")
 
     assert dialog.status_label.text() == "STATUS IDLE"
+
+
+def test_dialog_close_during_upload_confirms_then_cancels(
+    qtbot, tmp_path, monkeypatch
+) -> None:
+    dialog = OtaDialog()
+    qtbot.addWidget(dialog)
+    dialog.set_node("wifi-1")
+    dialog.load_package_summary(str(_package(tmp_path, version="1.0.0")))
+    cancels: list[str] = []
+    dialog.cancel_requested.connect(cancels.append)
+    dialog._start()
+    dialog.show()
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda *a, **k: QMessageBox.StandardButton.Yes,
+    )
+
+    dialog.close()
+
+    assert cancels == ["wifi-1"]
+
+
+def test_dialog_close_during_upload_can_be_declined(
+    qtbot, tmp_path, monkeypatch
+) -> None:
+    dialog = OtaDialog()
+    qtbot.addWidget(dialog)
+    dialog.set_node("wifi-1")
+    dialog.load_package_summary(str(_package(tmp_path, version="1.0.0")))
+    cancels: list[str] = []
+    dialog.cancel_requested.connect(cancels.append)
+    dialog._start()
+    dialog.show()
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda *a, **k: QMessageBox.StandardButton.No,
+    )
+
+    dialog.close()
+
+    # Declining keeps the modal dialog open and does not cancel the upload.
+    assert cancels == []
+    assert dialog.isVisible() is True
+
+    dialog._uploading = False
+    dialog.close()
