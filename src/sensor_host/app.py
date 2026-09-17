@@ -16,6 +16,7 @@ from sensor_host.branding import APPLICATION_ICON_PATH, APPLICATION_NAME
 from sensor_host.presentation import (
     AppController,
     MainWindow,
+    OtaDialog,
     dark_stylesheet,
     load_application_fonts,
 )
@@ -143,6 +144,7 @@ def _run_interactive(
     window.node_sidebar.alias_requested.connect(controller.set_alias)
     window.node_sidebar.remove_requested.connect(controller.remove_offline_node)
     _wire_archive_and_playback(window, controller)
+    _wire_firmware(window, controller)
     application.aboutToQuit.connect(controller.disconnect_device)
     refresh_devices()
     if fake_mode:
@@ -206,6 +208,26 @@ def _wire_archive_and_playback(window: MainWindow, controller: AppController) ->
 
     window.archive_view.open_requested.connect(open_for_playback)
     window.archive_view.set_controller(controller)
+
+
+def _wire_firmware(window: MainWindow, controller: AppController) -> OtaDialog:
+    """Connect the FIRMWARE/OTA toolbar entry, dialog and controller signals."""
+    dialog = OtaDialog(window)
+
+    def open_dialog() -> None:
+        dialog.set_node(controller.selected_node_id)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    window.firmware_requested.connect(open_dialog)
+    controller.ota_availability.connect(window.set_firmware_available)
+    dialog.upload_requested.connect(controller.start_ota_for)
+    dialog.cancel_requested.connect(controller.cancel_ota_for)
+    controller.ota_progress.connect(dialog.on_progress)
+    controller.ota_staged.connect(dialog.on_staged)
+    controller.ota_state.connect(dialog.on_state)
+    return dialog
 
 
 def main(argv: list[str] | None = None) -> int:

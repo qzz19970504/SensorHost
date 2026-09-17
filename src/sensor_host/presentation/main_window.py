@@ -142,6 +142,7 @@ class MainWindow(QMainWindow):
     livestream_requested = pyqtSignal(str)
     refresh_requested = pyqtSignal()
     wifi_start_requested = pyqtSignal(object)
+    firmware_requested = pyqtSignal()
 
     def __init__(self, settings: QSettings | None = None) -> None:
         super().__init__()
@@ -265,6 +266,11 @@ class MainWindow(QMainWindow):
         self.vibration_view.set_paused(is_paused)
         self.orientation_view.set_paused(is_paused)
 
+    def set_firmware_available(self, enabled: bool, reason: str) -> None:
+        """Enable the FIRMWARE/OTA entry only for a UART-source (Wi-Fi) node."""
+        self.firmware_button.setEnabled(enabled)
+        self.firmware_button.setToolTip(reason)
+
     def _refresh_node_controls(self) -> None:
         """Enable node-scoped actions only when a connected node can receive them."""
         node_ready = self._connected and self._node_available
@@ -320,6 +326,7 @@ class MainWindow(QMainWindow):
             self.live_target_combo,
             self.start_button,
             self.stop_button,
+            self.firmware_button,
             self.pause_button,
             self.record_button,
         )
@@ -630,6 +637,13 @@ class MainWindow(QMainWindow):
         self.stop_button.setProperty("role", "danger")
         self.stop_button.setAccessibleName("Stop acquisition")
         layout.addWidget(self.stop_button)
+        layout.addWidget(_toolbar_divider())
+        self.firmware_button = QPushButton("FIRMWARE")
+        self.firmware_button.setAccessibleName("Firmware OTA update")
+        self.firmware_button.setEnabled(False)
+        self.firmware_button.setToolTip("connect a Wi-Fi node to update firmware")
+        self.firmware_button.clicked.connect(self.firmware_requested)
+        layout.addWidget(self.firmware_button)
         layout.addStretch(1)
         self.pause_button = QPushButton("Ⅱ PAUSE")
         self.pause_button.setCheckable(True)

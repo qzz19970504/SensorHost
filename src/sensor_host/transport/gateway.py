@@ -118,6 +118,16 @@ class AcceptedSocketTransport:
         except OSError as error:
             raise TransportError(f"cannot write gateway {self.peer}: {error}") from error
 
+    def write_raw(self, data: bytes) -> None:
+        """Send raw bytes verbatim, e.g. a binary OTAF frame during OTA."""
+        payload = bytes(data)
+        if not payload:
+            raise ValueError("raw write must contain at least one byte")
+        try:
+            self._require_socket().sendall(payload)
+        except OSError as error:
+            raise TransportError(f"cannot write gateway {self.peer}: {error}") from error
+
     def _require_socket(self) -> socket.socket:
         if self._socket is None:
             raise TransportError(f"gateway {self.peer} is closed")

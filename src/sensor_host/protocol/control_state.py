@@ -54,6 +54,10 @@ class FirmwareControlState:
     diag_cdc_ctrl: int | None = None
     diag_cdc_export: int | None = None
     stop_reason: str | None = None
+    ota_state: str | None = None
+    ota_received: int | None = None
+    ota_total: int | None = None
+    ota_error: int | None = None
 
     def updated_from_cli(self, response: str) -> "FirmwareControlState":
         """Return a copy updated with recognized fields from one CLI frame."""
@@ -135,6 +139,9 @@ def _parse_line_into(line: str, updates: dict[str, object]) -> None:
     if line.startswith("+STOP_REASON:"):
         updates["stop_reason"] = line.removeprefix("+STOP_REASON:")
         return
+    if line.startswith("+OTA:"):
+        _parse_ota(_key_values(line.removeprefix("+OTA:")), updates)
+        return
     _parse_export_event(line, updates)
 
 
@@ -206,6 +213,22 @@ def _parse_diag(values: dict[str, str], updates: dict[str, object]) -> None:
         "CDC_LIVE": "diag_cdc_live",
         "CDC_CTRL": "diag_cdc_ctrl",
         "CDC_EXPORT": "diag_cdc_export",
+    }
+    for wire_name, field_name in integer_fields.items():
+        if wire_name in values:
+            updates[field_name] = _unsigned(values[wire_name], wire_name)
+
+
+def _parse_ota(values: dict[str, str], updates: dict[str, object]) -> None:
+    # Only the ``+OTA:STATE=...,RECEIVED=...,TOTAL=...,ERROR=...`` form appears
+    # inside an AT+STATE? CLI frame; the bare ACK/NACK/STAGED session replies
+    # travel as raw stream lines and are demultiplexed before reaching here.
+    if "STATE" in values:
+        updates["ota_state"] = values["STATE"]
+    integer_fields = {
+        "RECEIVED": "ota_received",
+        "TOTAL": "ota_total",
+        "ERROR": "ota_error",
     }
     for wire_name, field_name in integer_fields.items():
         if wire_name in values:

@@ -9,6 +9,7 @@ from uuid import UUID
 
 from sensor_host.acquisition.models import AcquisitionHealth
 from sensor_host.acquisition.sample_store import RealtimeSampleStore
+from sensor_host.ota.demux import StreamDemultiplexer
 from sensor_host.protocol import (
     ControlStateParseError,
     FirmwareControlState,
@@ -64,6 +65,18 @@ class AcquisitionController:
         self._device_uuid: UUID | None = None
         self._archive_recorder: ArchiveRecorder | None = None
         self._archive_recorder_lock = Lock()
+        # OTA session bridge: the worker thread owns the demultiplexer and both
+        # queues; the GUI/uploader threads only toggle flags and enqueue bytes.
+        self._ota_active = False
+        self._ota_reset_pending = False
+        self._ota_demux = StreamDemultiplexer()
+        self._ota_replies: queue.Queue[bytes] = queue.Queue()
+        self._ota_outbound: queue.Queue[bytes] = queue.Queue()
+
+    @property
+    def ota_active(self) -> bool:
+        """Return whether this session is currently demultiplexing an OTA link."""
+        return self._ota_active
 
     @property
     def health(self) -> AcquisitionHealth:
@@ -190,6 +203,27 @@ class AcquisitionController:
             except queue.Empty:
                 return responses
 
+    def start_ota(self) -> None:
+        """Arm the OTA demultiplexer; the worker resets it on the next chunk."""
+        self._ota_reset_pending = True
+        self._ota_active = True
+
+    def end_ota(self) -> None:
+        """Disarm OTA demuxing; held residue is flushed to the parser in run()."""
+        self._ota_active = False
+        self._ota_reset_pending = False
+
+    def send_ota_frame(self, data: bytes) -> None:
+        """Queue one raw upstream OTA burst for the worker thread to write."""
+        self._ota_outbound.put_nowait(bytes(data))
+
+    def next_ota_reply(self, timeout: float) -> bytes | None:
+        """Block up to timeout for the next bare ``+OTA:``/``OK`` reply line."""
+        try:
+            return self._ota_replies.get(timeout=timeout)
+        except queue.Empty:
+            return None
+
     def run(self, stop_event: Event, idle_limit: int | None = None) -> None:
         """Read until stopped, or until a test-only finite idle limit is met."""
         if idle_limit is not None and idle_limit <= 0:
@@ -198,6 +232,7 @@ class AcquisitionController:
         try:
             while not stop_event.is_set():
                 self._send_pending_commands()
+                self._send_pending_ota_frames()
                 chunk = self._transport.read(
                     max_bytes=_READ_CHUNK_BYTES,
                     timeout_s=_READ_TIMEOUT_SECONDS,
@@ -210,13 +245,48 @@ class AcquisitionController:
 
                 empty_read_count = 0
                 self._bytes_received += len(chunk)
-                frames = self._parser.feed(chunk)
+                frames = self._parse_chunk(chunk)
                 self._frames_received += len(frames)
                 for frame in frames:
                     self._handle_frame(frame)
                 self._store.update_parser_stats(self._parser.stats)
         finally:
             self._transport.close()
+
+    def _parse_chunk(self, chunk: bytes) -> list[Frame]:
+        """Feed one read chunk, splitting OTA reply lines out when OTA is armed."""
+        if self._ota_active:
+            if self._ota_reset_pending:
+                self._ota_demux.reset()
+                self._drain_queue(self._ota_replies)
+                self._ota_reset_pending = False
+            ota_lines, parser_bytes = self._ota_demux.feed(chunk)
+            for line in ota_lines:
+                self._ota_replies.put_nowait(line)
+            if not parser_bytes:
+                return []
+            return self._parser.feed(parser_bytes)
+        if self._ota_demux.buffered_bytes:
+            # OTA just ended: release any held residue ahead of new bytes.
+            residue = self._ota_demux.flush()
+            return self._parser.feed(residue + chunk)
+        return self._parser.feed(chunk)
+
+    @staticmethod
+    def _drain_queue(target: "queue.Queue[object]") -> None:
+        while True:
+            try:
+                target.get_nowait()
+            except queue.Empty:
+                return
+
+    def _send_pending_ota_frames(self) -> None:
+        while True:
+            try:
+                data = self._ota_outbound.get_nowait()
+            except queue.Empty:
+                return
+            self._transport.write_raw(data)
 
     def _send_pending_commands(self) -> None:
         while True:

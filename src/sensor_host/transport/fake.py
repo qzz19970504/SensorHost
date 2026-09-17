@@ -15,6 +15,7 @@ from sensor_host.protocol.sdf1 import (
     HEADER_SIZE,
     MessageType,
 )
+from sensor_host.ota.codec import FrameType, OtaCodecError, decode_frame
 from sensor_host.transport.base import DeviceDescriptor, TransportError
 
 
@@ -31,6 +32,9 @@ _IIS_WORD_SIZE = 7
 _SD_CAPACITY_BYTES = 16_384
 _SD_FRAME_COUNT = 24
 _SD_FRAME_BYTES = 62
+_OTA_MAX_IMAGE = 327_680
+_OTA_CHUNK = 512
+_OTA_APP_VERSION = "1.0.0"
 
 
 class FakeTransport:
@@ -63,6 +67,10 @@ class FakeTransport:
         self._sd_retained_frames = _SD_FRAME_COUNT
         self._sd_retained_chunks = 1
         self._sd_overwritten_frames = 0
+        self.raw_writes: list[bytes] = []
+        self._ota_active = False
+        self._ota_next_offset = 0
+        self._ota_image = bytearray()
 
     def discover(self) -> list[DeviceDescriptor]:
         """Return the single virtual endpoint exposed by fake mode."""
@@ -90,6 +98,9 @@ class FakeTransport:
         self._export_active = False
         self._export_target = "NONE"
         self._state = "IDLE"
+        self._ota_active = False
+        self._ota_next_offset = 0
+        self._ota_image = bytearray()
 
     def read(self, max_bytes: int, timeout_s: float) -> bytes:
         """Return one scheduled SDF1 packet before the bounded timeout expires."""
@@ -106,6 +117,14 @@ class FakeTransport:
                 return self._take_bytes(packet, max_bytes)
 
             now = self._clock()
+            if self._ota_active:
+                # Model stop-then-enter: no live frames while an OTA session
+                # owns the stream; only queued bare +OTA replies are served.
+                remaining = deadline - now
+                if remaining <= 0.0:
+                    return b""
+                time.sleep(min(0.005, remaining))
+                continue
             if self._export_active:
                 if self._export_frame_index >= _SD_FRAME_COUNT:
                     self._finish_export()
@@ -171,6 +190,62 @@ class FakeTransport:
             return
         self._queue_cli("ERROR:UNKNOWN\r\n")
 
+    def write_raw(self, data: bytes) -> None:
+        """Accept a raw OTA upstream byte burst and drive the device simulation."""
+        self._require_open()
+        payload = bytes(data)
+        if not payload:
+            raise ValueError("raw write must contain at least one byte")
+        self.raw_writes.append(payload)
+        if payload.startswith(b"AT+OTA"):
+            self._ota_active = True
+            self._ota_next_offset = 0
+            self._ota_image = bytearray()
+            self._queue_raw(
+                (
+                    f"+OTA:READY,PROTO=1,MAX={_OTA_MAX_IMAGE},CHUNK={_OTA_CHUNK}\r\n"
+                    "OK\r\n"
+                ).encode()
+            )
+            return
+        self._handle_ota_frame(payload)
+
+    def _handle_ota_frame(self, payload: bytes) -> None:
+        try:
+            frame = decode_frame(payload)
+        except OtaCodecError:
+            self._queue_raw(
+                f"+OTA:NACK,CODE=FRAME_CRC,SEQ=0,NEXT={self._ota_next_offset}\r\n".encode()
+            )
+            return
+        if frame.frame_type is FrameType.BEGIN:
+            self._queue_raw(b"+OTA:ACK,SEQ=0,NEXT=0\r\n")
+            return
+        if frame.frame_type is FrameType.CANCEL:
+            self._ota_active = False
+            self._queue_raw(
+                f"+OTA:ACK,SEQ={frame.sequence},NEXT={self._ota_next_offset}\r\n".encode()
+            )
+            return
+        if frame.frame_type is FrameType.COMMIT:
+            crc = zlib.crc32(bytes(self._ota_image)) & 0xFFFFFFFF
+            self._ota_active = False
+            self._queue_raw(
+                f"+OTA:STAGED,VERSION={_OTA_APP_VERSION},CRC={crc:08X}\r\nOK\r\n".encode()
+            )
+            return
+        # DATA frame: accept contiguously and advance the durable offset.
+        if frame.offset == self._ota_next_offset:
+            self._ota_image.extend(frame.payload)
+            self._ota_next_offset += len(frame.payload)
+        self._queue_raw(
+            f"+OTA:ACK,SEQ={frame.sequence},NEXT={self._ota_next_offset}\r\n".encode()
+        )
+
+    def _queue_raw(self, data: bytes) -> None:
+        """Queue bare (non-SDF1) reply bytes exactly as the firmware OTA does."""
+        self._pending_packets.append(bytes(data))
+
     def _handle_acquisition_command(self, command: str) -> None:
         if command == "AT+START":
             if self._state not in {"IDLE", "ERROR"}:
@@ -235,7 +310,8 @@ class FakeTransport:
             f"OVERWRITTEN_FRAMES={self._sd_overwritten_frames},READY=1,"
             "FORMAT_REQUIRED=0\r\n"
             f"+EXPORT:TARGET={self._export_target},CHUNK={self._export_frame_index},"
-            f"FRAME={self._export_frame_index}\r\nOK\r\n"
+            f"FRAME={self._export_frame_index}\r\n"
+            "+OTA:STATE=OFF,RECEIVED=0,TOTAL=0,ERROR=0\r\nOK\r\n"
         )
 
     def _make_live_frame(self) -> bytes:

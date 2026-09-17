@@ -34,6 +34,9 @@ class Transport(Protocol):
     def write_control(self, command: bytes) -> None:
         """Write one control line after transport-specific normalization."""
 
+    def write_raw(self, data: bytes) -> None:
+        """Write raw bytes verbatim, e.g. a binary OTAF frame during OTA."""
+
 
 class TransportError(RuntimeError):
     """Report an endpoint I/O failure with transport context."""

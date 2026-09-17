@@ -83,3 +83,37 @@ def test_control_state_increments_export_event_revision() -> None:
     second = first.updated_from_cli("EXPORT_END:CHUNKS=3,FRAMES=4\r\n")
 
     assert second.export_revision == 2
+
+
+def test_control_state_parses_ota_state_fields() -> None:
+    state = FirmwareControlState().updated_from_cli(
+        "+STATE:IDLE\r\n"
+        "+OTA:STATE=RECEIVING,RECEIVED=1024,TOTAL=4096,ERROR=0\r\nOK\r\n"
+    )
+
+    assert state.ota_state == "RECEIVING"
+    assert state.ota_received == 1024
+    assert state.ota_total == 4096
+    assert state.ota_error == 0
+
+
+def test_control_state_ota_state_defaults_to_none() -> None:
+    state = FirmwareControlState().updated_from_cli("+STATE:IDLE\r\nOK\r\n")
+
+    assert state.ota_state is None
+    assert state.ota_received is None
+
+
+def test_control_state_rejects_oversized_ota_field() -> None:
+    with pytest.raises(ControlStateParseError):
+        FirmwareControlState().updated_from_cli(
+            f"+OTA:STATE=OFF,RECEIVED={1 << 64},TOTAL=0,ERROR=0\r\n"
+        )
+
+
+def test_control_state_rejects_duplicate_ota_section() -> None:
+    with pytest.raises(ControlStateParseError):
+        FirmwareControlState().updated_from_cli(
+            "+OTA:STATE=OFF,RECEIVED=0,TOTAL=0,ERROR=0\r\n"
+            "+OTA:STATE=READY,RECEIVED=0,TOTAL=0,ERROR=0\r\n"
+        )
