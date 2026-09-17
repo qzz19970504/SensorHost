@@ -250,7 +250,10 @@ class AcquisitionController:
                 else:
                     self._last_error = "deferred recording capacity exceeded"
         if frame.message_type is MessageType.IIS3DWB_FIFO:
-            self._store.append_iis(frame.iis_samples or ())
+            if frame.iis_ts_us is not None:
+                self._store.append_iis_arrays(frame.iis_ts_us, frame.iis_accel_g)
+            else:
+                self._store.append_iis(frame.iis_samples or ())
             return
         if frame.message_type is MessageType.JY61PL_SAMPLE:
             if frame.jy61pl is not None:

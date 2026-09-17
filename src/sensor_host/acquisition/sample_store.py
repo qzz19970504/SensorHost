@@ -106,6 +106,16 @@ class RealtimeSampleStore:
             [sample.acceleration_g for sample in samples],
             dtype=np.float64,
         )
+        self.append_iis_arrays(timestamps_us, acceleration_g)
+
+    def append_iis_arrays(
+        self, timestamps_us: "np.ndarray", acceleration_g: "np.ndarray"
+    ) -> None:
+        """Append pre-decoded arrays without per-sample Python objects."""
+        timestamps_us = np.asarray(timestamps_us, dtype=np.float64)
+        acceleration_g = np.asarray(acceleration_g, dtype=np.float64)
+        if timestamps_us.size == 0:
+            return
         chunk = _SampleChunk(timestamps_us, acceleration_g)
         with self._lock:
             self._chunks.append(chunk)

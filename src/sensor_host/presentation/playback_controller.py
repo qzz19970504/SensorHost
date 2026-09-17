@@ -178,7 +178,10 @@ class PlaybackController(QObject):
 
     def _apply_frame(self, frame: Frame) -> None:
         if frame.message_type is MessageType.IIS3DWB_FIFO:
-            self._store.append_iis(frame.iis_samples or ())
+            if frame.iis_ts_us is not None:
+                self._store.append_iis_arrays(frame.iis_ts_us, frame.iis_accel_g)
+            else:
+                self._store.append_iis(frame.iis_samples or ())
             return
         if frame.message_type is MessageType.JY61PL_SAMPLE and frame.jy61pl is not None:
             self._store.update_jy(frame.jy61pl, time.monotonic())

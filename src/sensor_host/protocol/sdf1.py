@@ -8,6 +8,8 @@ import zlib
 from dataclasses import dataclass
 from enum import IntEnum
 
+import numpy as np
+
 
 MAGIC = b"SDF1"
 VERSION = 1
@@ -23,6 +25,17 @@ IIS_SAMPLE_PERIOD_US = 37.5
 
 _HEADER = struct.Struct("<4sBBHHHIQHH")
 _STATUS = struct.Struct("<BBBBHH9I5H2xQ")
+
+# One FIFO word is 7 bytes: a tag byte plus 6 payload bytes viewed either as
+# 3x int16 acceleration or as a uint32 timestamp (overlapping union layout).
+_IIS_WORD_DTYPE = np.dtype(
+    {
+        "names": ["tag", "xyz", "ts"],
+        "formats": ["u1", ("<i2", (3,)), "<u4"],
+        "offsets": [0, 1, 1],
+        "itemsize": IIS_WORD_SIZE,
+    }
+)
 
 
 class MessageType(IntEnum):
@@ -107,11 +120,33 @@ class Frame:
     payload: bytes
     raw_bytes: bytes = b""
     device_uuid: uuid.UUID | None = None
-    iis_words: tuple[IisFifoWord, ...] | None = None
-    iis_samples: tuple[IisSample, ...] | None = None
+    iis_ts_us: "np.ndarray | None" = None
+    iis_accel_g: "np.ndarray | None" = None
+    iis_raw: "np.ndarray | None" = None
     jy61pl: Jy61plSample | None = None
     status: StatusV1 | None = None
     cli_text: str | None = None
+
+    @property
+    def iis_words(self) -> tuple[IisFifoWord, ...] | None:
+        """Decode FIFO words on demand; the hot path never builds them."""
+        if self.message_type is not MessageType.IIS3DWB_FIFO or not self.payload:
+            return None
+        return decode_iis_words(self.payload)
+
+    @property
+    def iis_samples(self) -> tuple[IisSample, ...] | None:
+        """Materialize per-sample tuples on demand (tests/replay only)."""
+        if self.iis_ts_us is None:
+            return None
+        return tuple(
+            IisSample(
+                timestamp_us=float(ts),
+                acceleration_raw=tuple(int(v) for v in raw),
+                acceleration_g=tuple(float(v) for v in acc),
+            )
+            for ts, raw, acc in zip(self.iis_ts_us, self.iis_raw, self.iis_accel_g)
+        )
 
     @property
     def archive_export(self) -> bool:
@@ -151,92 +186,81 @@ def decode_iis_words(payload: bytes) -> tuple[IisFifoWord, ...]:
 
 
 class IisTimestampReconstructor:
-    """Extend sensor timestamp tags and assign times to acceleration words."""
+    """Vectorized extension of sensor timestamp tags onto acceleration words.
+
+    Semantics are identical to the historical per-word walker: acceleration
+    words before the first timestamp tag start from the carried clock (or are
+    back-dated from the first tag when no clock is carried yet), each timestamp
+    tag restarts the 37.5 us step, and a frame without tags continues the carry
+    or is back-dated from the frame timestamp.
+    """
 
     def __init__(self) -> None:
         self._last_ticks: int | None = None
         self._tick_epoch = 0
-        self._next_sample_us: float | None = None
-        self._sensor_to_mcu_offset_us: float | None = None
+        self._carry_us: float | None = None
 
-    def _extend_ticks(self, ticks: int) -> int:
-        if (
-            self._last_ticks is not None
-            and ticks < self._last_ticks
-            and self._last_ticks - ticks > 0x80000000
-        ):
-            self._tick_epoch += 1 << 32
-        self._last_ticks = ticks
-        return self._tick_epoch + ticks
+    def _extend_ticks(self, ticks: "np.ndarray") -> "np.ndarray":
+        extended = np.empty(ticks.size, dtype=np.int64)
+        for index, value in enumerate(ticks):
+            value = int(value)
+            if (
+                self._last_ticks is not None
+                and value < self._last_ticks
+                and self._last_ticks - value > 0x80000000
+            ):
+                self._tick_epoch += 1 << 32
+            self._last_ticks = value
+            extended[index] = self._tick_epoch + value
+        return extended
 
-    @staticmethod
-    def _make_sample(raw: tuple[int, int, int], timestamp_us: float) -> IisSample:
-        return IisSample(
-            timestamp_us=timestamp_us,
-            acceleration_raw=raw,
-            acceleration_g=tuple(value * 0.000061 for value in raw),
+    def process_payload(
+        self, payload: bytes, frame_timestamp_us: int
+    ) -> "tuple[np.ndarray, np.ndarray, np.ndarray]":
+        empty = (
+            np.empty(0, dtype=np.float64),
+            np.empty((0, 3), dtype=np.float64),
+            np.empty((0, 3), dtype=np.int64),
         )
-
-    def process(
-        self, words: tuple[IisFifoWord, ...], frame_timestamp_us: int
-    ) -> tuple[IisSample, ...]:
-        samples: list[IisSample] = []
-        pending: list[tuple[int, int, int]] = []
-        sensor_times: dict[int, float] = {}
-
-        for index, word in enumerate(words):
-            if word.timestamp_ticks is not None:
-                sensor_times[index] = (
-                    self._extend_ticks(word.timestamp_ticks)
-                    * IIS_TIMESTAMP_TICK_US
-                )
-
-        if sensor_times:
-            anchor_index = next(reversed(sensor_times))
-            accelerations_after_anchor = sum(
-                word.acceleration_raw is not None
-                for word in words[anchor_index + 1 :]
+        words = np.frombuffer(payload, dtype=_IIS_WORD_DTYPE)
+        sensor_tag = words["tag"] >> 3
+        accel_index = np.flatnonzero(sensor_tag == 2)
+        ts_index = np.flatnonzero(sensor_tag == 4)
+        count = accel_index.size
+        if count == 0:
+            return empty
+        raw = words["xyz"][accel_index].astype(np.int64)
+        if ts_index.size:
+            sensor_times = (
+                self._extend_ticks(words["ts"][ts_index].astype(np.int64))
+                * IIS_TIMESTAMP_TICK_US
             )
-            anchor_mcu_us = frame_timestamp_us - max(
-                accelerations_after_anchor - 1, 0
-            ) * IIS_SAMPLE_PERIOD_US
-            self._sensor_to_mcu_offset_us = (
-                anchor_mcu_us - sensor_times[anchor_index]
+            after_anchor = int(np.count_nonzero(accel_index > ts_index[-1]))
+            anchor_mcu_us = frame_timestamp_us - max(after_anchor - 1, 0) * (
+                IIS_SAMPLE_PERIOD_US
             )
-
-        for index, word in enumerate(words):
-            if word.acceleration_raw is not None:
-                if self._next_sample_us is None:
-                    pending.append(word.acceleration_raw)
-                else:
-                    samples.append(
-                        self._make_sample(word.acceleration_raw, self._next_sample_us)
-                    )
-                    self._next_sample_us += IIS_SAMPLE_PERIOD_US
-            elif word.timestamp_ticks is not None:
-                sensor_timestamp_us = sensor_times[index]
-                timestamp_us = sensor_timestamp_us
-                if self._sensor_to_mcu_offset_us is not None:
-                    timestamp_us += self._sensor_to_mcu_offset_us
-                if pending:
-                    first_time = timestamp_us - len(pending) * IIS_SAMPLE_PERIOD_US
-                    samples.extend(
-                        self._make_sample(raw, first_time + index * IIS_SAMPLE_PERIOD_US)
-                        for index, raw in enumerate(pending)
-                    )
-                    pending.clear()
-                self._next_sample_us = timestamp_us
-
-        if pending:
-            first_time = frame_timestamp_us - (
-                len(pending) - 1
-            ) * IIS_SAMPLE_PERIOD_US
-            samples.extend(
-                self._make_sample(raw, first_time + index * IIS_SAMPLE_PERIOD_US)
-                for index, raw in enumerate(pending)
+            tag_times = sensor_times + (anchor_mcu_us - sensor_times[-1])
+            segment = np.searchsorted(ts_index, accel_index, side="left")
+            before_first = int(np.count_nonzero(accel_index < ts_index[0]))
+            start0 = (
+                self._carry_us
+                if self._carry_us is not None
+                else tag_times[0] - before_first * IIS_SAMPLE_PERIOD_US
             )
-            self._next_sample_us = frame_timestamp_us + IIS_SAMPLE_PERIOD_US
-        return tuple(samples)
+            starts = np.concatenate(([start0], tag_times))
+        else:
+            segment = np.zeros(count, dtype=np.int64)
+            if self._carry_us is not None:
+                start0 = self._carry_us
+            else:
+                start0 = frame_timestamp_us - (count - 1) * IIS_SAMPLE_PERIOD_US
+            starts = np.array([start0], dtype=np.float64)
+        counts = np.bincount(segment, minlength=starts.size)
+        segment_begin = np.cumsum(counts) - counts
+        within = np.arange(count) - segment_begin[segment]
+        times = starts[segment] + within * IIS_SAMPLE_PERIOD_US
+        self._carry_us = float(times[-1]) + IIS_SAMPLE_PERIOD_US
+        return times, raw * 0.000061, raw
 
 
 def _decode_jy61pl(payload: bytes) -> Jy61plSample:
@@ -418,9 +442,15 @@ class StreamParser:
                 return None
             if not self._decode_sensor_payload:
                 return Frame(**common)
-            words = decode_iis_words(payload)
-            samples = self._iis_time.process(words, timestamp_us)
-            return Frame(**common, iis_words=words, iis_samples=samples)
+            times, accel_g, raw = self._iis_time.process_payload(
+                payload, timestamp_us
+            )
+            return Frame(
+                **common,
+                iis_ts_us=times,
+                iis_accel_g=accel_g,
+                iis_raw=raw,
+            )
         if message_type is MessageType.JY61PL_SAMPLE:
             if len(payload) != 14 or item_count != 1:
                 self.stats.payload_errors += 1
