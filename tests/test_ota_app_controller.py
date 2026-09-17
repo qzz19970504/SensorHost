@@ -60,6 +60,8 @@ class OtaBenchTransport:
         app_version: str = "1.0.0",
         staged_crc: int | None = None,
         reset_after_staged: bool = True,
+        data_nack_code: str | None = None,
+        acq_state: str = "IDLE",
     ) -> None:
         self._uuid = device_uuid
         self._out: deque = deque()
@@ -72,6 +74,8 @@ class OtaBenchTransport:
         self._app_version = app_version
         self._staged_crc = staged_crc
         self._reset_after_staged = reset_after_staged
+        self._data_nack_code = data_nack_code
+        self._acq_state = acq_state
         self.closed = False
 
     def discover(self):
@@ -90,7 +94,7 @@ class OtaBenchTransport:
             self._push_cli(f"+UUID:{self._uuid},SOURCE=DERIVED\r\nOK\r\n")
         elif text == "AT+STATE?":
             self._push_cli(
-                "+STATE:IDLE\r\n"
+                f"+STATE:{self._acq_state}\r\n"
                 "+SD:USED=0,CAPACITY=1000,PENDING_FRAMES=0,RETAINED_CHUNKS=0,"
                 "RETAINED_FRAMES=0,OVERWRITTEN_CHUNKS=0,OVERWRITTEN_FRAMES=0,"
                 "READY=1,FORMAT_REQUIRED=0\r\n"
@@ -112,6 +116,12 @@ class OtaBenchTransport:
         if frame.frame_type is FrameType.BEGIN:
             self._push(b"+OTA:ACK,SEQ=0,NEXT=0\r\n")
         elif frame.frame_type is FrameType.DATA:
+            if self._data_nack_code is not None:
+                self._push(
+                    f"+OTA:NACK,CODE={self._data_nack_code},"
+                    f"SEQ={frame.sequence},NEXT={self._ota_next}\r\n".encode()
+                )
+                return
             if frame.offset == self._ota_next:
                 self._ota_image.extend(frame.payload)
                 self._ota_next += len(frame.payload)
@@ -312,3 +322,69 @@ def test_bad_package_is_rejected_before_upload(qtbot, tmp_path) -> None:
         assert transport.raw_writes == []
     finally:
         controller.disconnect_device()
+
+
+def test_ota_failure_surfaces_chinese_nack_meaning(qtbot, tmp_path) -> None:
+    transport = OtaBenchTransport(data_nack_code="SD_IO")
+    controller = AppController(RecordingIdleTransport)
+    states: list[tuple[str, str, str]] = []
+    errors: list[str] = []
+    controller.ota_state.connect(lambda n, s, d: states.append((n, s, d)))
+    controller.error_raised.connect(errors.append)
+    controller.accept_gateway_client(
+        AcceptedGatewayClient("wifi-1", "peer-1", transport)  # type: ignore[arg-type]
+    )
+    try:
+        qtbot.waitUntil(lambda: _sd_ready(controller, "wifi-1"), timeout=3000)
+        package_path = _write_package(tmp_path, image_size=600)
+
+        controller.start_ota_for("wifi-1", str(package_path))
+
+        qtbot.waitUntil(
+            lambda: any(state[1] == "FAILED" for state in states), timeout=8000
+        )
+        failed = next(state for state in states if state[1] == "FAILED")
+        assert "SD 写入失败" in failed[2]
+        assert any("SD 写入失败" in error for error in errors)
+        assert controller.ota_active_node() is None
+    finally:
+        controller.disconnect_device()
+
+
+def test_acquire_state_prompts_stop_then_enter(qtbot, tmp_path) -> None:
+    transport = OtaBenchTransport(acq_state="ACQUIRE", reset_after_staged=False)
+    controller = AppController(RecordingIdleTransport)
+    states: list[tuple[str, str, str]] = []
+    controller.ota_state.connect(lambda n, s, d: states.append((n, s, d)))
+    controller.accept_gateway_client(
+        AcceptedGatewayClient("wifi-1", "peer-1", transport)  # type: ignore[arg-type]
+    )
+    try:
+        qtbot.waitUntil(lambda: _sd_ready(controller, "wifi-1"), timeout=3000)
+        package_path = _write_package(tmp_path)
+
+        controller.start_ota_for("wifi-1", str(package_path))
+
+        qtbot.waitUntil(
+            lambda: any(state[1] == "STOPPING_ACQUISITION" for state in states),
+            timeout=3000,
+        )
+        prompt = next(
+            state for state in states if state[1] == "STOPPING_ACQUISITION"
+        )
+        assert "停止采集" in prompt[2]
+    finally:
+        controller.disconnect_device()
+
+
+def test_describe_nack_covers_every_firmware_code() -> None:
+    from sensor_host.ota.messages import NACK_CODE_ZH, describe_nack
+
+    for code in (
+        "NONE", "FRAME_CRC", "FORMAT", "TARGET", "SEQUENCE",
+        "OFFSET", "SD_IO", "IMAGE_CRC", "TIMEOUT", "STATE",
+    ):
+        assert code in NACK_CODE_ZH
+    assert describe_nack("TIMEOUT") == "固件 30 秒不活动已中止会话"
+    assert describe_nack("IMAGE_CRC") == "镜像 CRC 校验失败"
+    assert "未知" in describe_nack("NOT_A_REAL_CODE")

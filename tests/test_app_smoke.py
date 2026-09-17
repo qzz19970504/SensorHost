@@ -497,7 +497,20 @@ def test_global_recording_writes_separate_uuid_node_files(qtbot, tmp_path) -> No
         controller.set_recording(True, path=tmp_path)
         first.chunks.put(encode_jy_frame(first_uuid, sequence=2))
         second.chunks.put(encode_jy_frame(second_uuid, sequence=2))
-        qtbot.waitUntil(lambda: len(list(tmp_path.glob("*/segment-001.sdf1"))) == 2)
+
+        def _both_recorders_wrote() -> bool:
+            sessions = list(controller._sessions.values())
+            return len(sessions) == 2 and all(
+                session.recorder is not None
+                and session.recorder.bytes_written > 0
+                for session in sessions
+            )
+
+        # The writer thread only flushes to disk on stop(), so waiting on file
+        # size here would deadlock and waiting merely on file existence races
+        # frame submission. Wait until both workers have handed their frame to
+        # the recorder writer (bytes_written > 0) before stopping.
+        qtbot.waitUntil(_both_recorders_wrote, timeout=2000)
         controller.set_recording(False)
 
         recordings = list(tmp_path.glob("*/segment-001.sdf1"))
