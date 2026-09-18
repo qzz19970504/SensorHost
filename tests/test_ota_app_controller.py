@@ -10,7 +10,7 @@ import zlib
 from collections import deque
 
 from sensor_host.ota.codec import FrameType, decode_frame
-from sensor_host.ota.package import pack_ota
+from sensor_host.ota.package import build_package, pack_ota
 from sensor_host.presentation.app_controller import AppController
 from sensor_host.protocol.sdf1 import HEADER_SIZE, MessageType
 from sensor_host.transport import AcceptedGatewayClient
@@ -388,3 +388,30 @@ def test_describe_nack_covers_every_firmware_code() -> None:
     assert describe_nack("TIMEOUT") == "固件 30 秒不活动已中止会话"
     assert describe_nack("IMAGE_CRC") == "镜像 CRC 校验失败"
     assert "未知" in describe_nack("NOT_A_REAL_CODE")
+
+
+def test_start_ota_accepts_prebuilt_package_from_bin(qtbot) -> None:
+    # The dialog builds an OtaPackage in memory from a raw .bin; the controller
+    # must accept that object directly (no .ota file on disk).
+    transport = OtaBenchTransport(app_version="4.5.6", reset_after_staged=False)
+    controller = AppController(RecordingIdleTransport)
+    states: list[tuple[str, str, str]] = []
+    staged: list[tuple] = []
+    controller.ota_state.connect(lambda n, s, d: states.append((n, s, d)))
+    controller.ota_staged.connect(lambda n, v, c, m: staged.append((n, v, c, m)))
+    controller.accept_gateway_client(
+        AcceptedGatewayClient("wifi-1", "peer-1", transport)  # type: ignore[arg-type]
+    )
+    try:
+        qtbot.waitUntil(lambda: _sd_ready(controller, "wifi-1"), timeout=3000)
+        image = bytes((index * 7 + 3) & 0xFF for index in range(1000))
+        package = build_package(image, app_version="4.5.6")
+
+        controller.start_ota_for("wifi-1", package)
+
+        qtbot.waitUntil(
+            lambda: any(state[1] == "WAIT_RESTART" for state in states), timeout=8000
+        )
+        assert staged and staged[0][1] == "4.5.6" and staged[0][3] is True
+    finally:
+        controller.disconnect_device()
