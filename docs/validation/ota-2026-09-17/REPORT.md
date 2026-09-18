@@ -75,7 +75,15 @@ Attach `acceptance.json` (written by `--report`) alongside this file.
 1. Connect a Wi-Fi gateway node; the toolbar **FIRMWARE** button becomes enabled.
 2. Connect a CDC node instead; **FIRMWARE** is greyed out with tooltip
    "OTA 仅支持 UART 来源链路（Wi-Fi 网关）".
-3. Open **FIRMWARE**, select a `.ota`, confirm the summary (target/version/size/CRC).
+3. Open **FIRMWARE** and select a firmware file:
+   - a raw compiled `.bin` — the host packages it into a `.ota` in memory
+     (target/device/address/CRC/package-id all derived automatically). The
+     `APP 版本 (a.b.c)` field is pre-filled from the filename when it contains
+     `x.y.z` and is editable; all other manifest fields are invisible to the
+     user. `minimum_bootloader_version` defaults to `1.0.0`.
+   - or an existing `.ota` — loaded and self-checked as-is; the version field is
+     read-only and taken from the manifest.
+   Confirm the summary (target/version/size/CRC).
 4. Start the upload; watch the progress bar and phase text; the DIAGNOSTICS page
    shows `OTA STATE/RECEIVED/TOTAL/ERROR`.
 5. On `+OTA:STAGED` the dialog shows the device VERSION/CRC and whether it matches

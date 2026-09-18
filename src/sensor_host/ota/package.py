@@ -9,6 +9,7 @@ suite can build its own golden packages without a hardware toolchain.
 from __future__ import annotations
 
 import hashlib
+import re
 import struct
 import zlib
 from dataclasses import dataclass
@@ -44,6 +45,10 @@ _STATE_NAMES = {
     STATE_INSTALLING: "INSTALLING",
     STATE_APPLIED: "APPLIED",
 }
+
+# A loose x.y.z scanner used only to pre-fill the version field from a binary
+# filename; the authoritative range check lives in version_value().
+_VERSION_IN_TEXT = re.compile(r"\d{1,3}\.\d{1,3}\.\d{1,5}")
 
 
 class OtaPackageError(ValueError):
@@ -217,6 +222,66 @@ def load_package(path: str | Path) -> OtaPackage:
         raise OtaPackageError(f"cannot read OTA package: {error}") from error
     manifest = validate_package(package)
     return OtaPackage(data=package, manifest=manifest)
+
+
+def is_package_image(data: bytes) -> bool:
+    """Return whether the bytes already start with a 512-byte OTA1 manifest."""
+    return len(data) >= MANIFEST_BLOCK_SIZE and data[:4] == MANIFEST_MAGIC
+
+
+def version_from_text(text: str) -> str | None:
+    """Extract the first ``x.y.z`` version token from a filename or label."""
+    match = _VERSION_IN_TEXT.search(text or "")
+    return match.group(0) if match else None
+
+
+def build_package(
+    image: bytes,
+    *,
+    app_version: int | str | Sequence[int],
+    minimum_bootloader_version: int | str | Sequence[int] = "1.0.0",
+    generation: int = 0,
+) -> OtaPackage:
+    """Turn a raw compiled ``app.bin`` image into a validated ``.ota`` package.
+
+    Every manifest field except ``app_version`` is derived automatically: the
+    fixed F407 target/device/address constants, the image size and CRC32, the
+    sha256-based package id, and the manifest CRC.  ``minimum_bootloader_version``
+    defaults to 1.0.0, which the bootloader accepts (it requires min <= current).
+    """
+    data = pack_ota(
+        image=image,
+        app_version=app_version,
+        minimum_bootloader_version=minimum_bootloader_version,
+        generation=generation,
+    )
+    manifest = validate_package(data)
+    return OtaPackage(data=data, manifest=manifest)
+
+
+def load_image_or_package(path: str | Path) -> OtaPackage:
+    """Load a host-selected file: an existing ``.ota`` or a raw ``.bin`` image.
+
+    A ``.bin`` (or any non-``.ota`` file that is not already an OTA1 package) is
+    rejected here because it still needs an ``app_version``; callers use
+    :func:`build_package` for that path.  Files that already carry the OTA1
+    manifest are validated and returned regardless of their suffix.
+    """
+    file_path = Path(path)
+    try:
+        raw = file_path.read_bytes()
+    except OSError as error:
+        raise OtaPackageError(f"cannot read firmware file: {error}") from error
+    if is_package_image(raw):
+        manifest = validate_package(raw)
+        return OtaPackage(data=raw, manifest=manifest)
+    if file_path.suffix.lower() == ".ota":
+        # A .ota that is not a valid package: surface the precise validation error.
+        manifest = validate_package(raw)
+        return OtaPackage(data=raw, manifest=manifest)
+    raise OtaPackageError(
+        "selected file is a raw image; provide an app version to package it"
+    )
 
 
 def pack_manifest(

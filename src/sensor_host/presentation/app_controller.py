@@ -24,6 +24,7 @@ from sensor_host.acquisition import (
 )
 from sensor_host.ota import (
     TARGET_ID,
+    OtaPackage,
     OtaPackageError,
     OtaUploadCancelled,
     OtaUploadError,
@@ -782,8 +783,12 @@ class AppController(QObject):
             return True
         return self._ota_node_id == node_id
 
-    def start_ota_for(self, node_id: str, package_path: str | Path) -> None:
-        """Validate guards, self-check the package, and start one OTA upload."""
+    def start_ota_for(self, node_id: str, package: "OtaPackage | str | Path") -> None:
+        """Validate guards, self-check the package, and start one OTA upload.
+
+        ``package`` may be a path to a ``.ota`` file or an already-built
+        :class:`OtaPackage` (e.g. produced by the dialog from a raw ``.bin``).
+        """
         session = self._sessions.get(node_id)
         if session is None:
             self.error_raised.emit(f"unknown node: {node_id}")
@@ -815,7 +820,11 @@ class AppController(QObject):
             )
             return
         try:
-            package = load_package(package_path)
+            ota_package = (
+                package
+                if isinstance(package, OtaPackage)
+                else load_package(package)
+            )
         except (OtaPackageError, OSError) as error:
             self.ota_state.emit(node_id, "PACKAGE_REJECTED", str(error))
             self.error_raised.emit(str(error))
@@ -836,13 +845,13 @@ class AppController(QObject):
             "kind": session.transport_kind,
             "device_uuid": summary.device_uuid,
             "device_id": session.peer,
-            "version": package.version_text,
-            "crc": package.crc_text,
+            "version": ota_package.version_text,
+            "crc": ota_package.crc_text,
         }
         session.acquisition.start_ota()
         thread = QThread(self)
         worker = OtaUploadWorker(
-            node_id, session.acquisition, package.data, cancel_event
+            node_id, session.acquisition, ota_package.data, cancel_event
         )
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
@@ -854,7 +863,12 @@ class AppController(QObject):
         self._ota_thread = thread
         self._ota_worker = worker
         thread.start()
-        self.ota_state.emit(node_id, "STARTED", f"开始上传 {Path(package_path).name}")
+        label = (
+            Path(package).name
+            if isinstance(package, (str, Path))
+            else f"{ota_package.version_text} (auto-packaged)"
+        )
+        self.ota_state.emit(node_id, "STARTED", f"开始上传 {label}")
         self._emit_ota_availability()
 
     def cancel_ota_for(self, node_id: str) -> None:

@@ -112,13 +112,97 @@ def test_dialog_start_emits_upload_request_and_arms_cancel(qtbot, tmp_path) -> N
     dialog.set_node("wifi-1")
     path = _package(tmp_path, version="1.0.0")
     dialog.load_package_summary(str(path))
-    requests: list[tuple[str, str]] = []
+    requests: list[tuple] = []
     dialog.upload_requested.connect(lambda node, pkg: requests.append((node, pkg)))
 
     dialog._start()
 
-    assert requests == [("wifi-1", str(path))]
+    assert len(requests) == 1
+    node, package = requests[0]
+    assert node == "wifi-1"
+    assert package.data == path.read_bytes()
     assert dialog.cancel_button.isEnabled() is True
+    assert dialog.start_button.isEnabled() is False
+
+
+def _write_bin(tmp_path, name: str = "app.bin", size: int = 1200):
+    image = bytes((index * 3 + 1) & 0xFF for index in range(size))
+    path = tmp_path / name
+    path.write_bytes(image)
+    return path, image
+
+
+def test_dialog_bin_prefills_version_and_builds_package(qtbot, tmp_path) -> None:
+    dialog = OtaDialog()
+    qtbot.addWidget(dialog)
+    dialog.set_node("wifi-1")
+    path, image = _write_bin(tmp_path, name="app-2.5.9.bin")
+
+    assert dialog.load_package_summary(str(path)) is True
+    assert dialog.version_edit.isEnabled() is True
+    assert dialog.version_edit.text() == "2.5.9"
+    assert "VERSION 2.5.9" in dialog.summary_label.text()
+    assert "1,200 bytes" in dialog.summary_label.text()
+
+    requests: list[tuple] = []
+    dialog.upload_requested.connect(lambda node, pkg: requests.append((node, pkg)))
+    dialog._start()
+
+    node, package = requests[0]
+    assert node == "wifi-1"
+    assert package.version_text == "2.5.9"
+    assert package.image == image
+    assert len(package.data) == 512 + len(image)
+
+
+def test_dialog_bin_defaults_version_when_absent_from_name(qtbot, tmp_path) -> None:
+    dialog = OtaDialog()
+    qtbot.addWidget(dialog)
+    dialog.set_node("wifi-1")
+    path, _image = _write_bin(tmp_path, name="firmware.bin")
+
+    assert dialog.load_package_summary(str(path)) is True
+    assert dialog.version_edit.text() == "0.0.0"
+
+
+def test_dialog_editing_version_updates_preview(qtbot, tmp_path) -> None:
+    dialog = OtaDialog()
+    qtbot.addWidget(dialog)
+    dialog.set_node("wifi-1")
+    path, _image = _write_bin(tmp_path, name="app-1.0.0.bin")
+    dialog.load_package_summary(str(path))
+
+    dialog.version_edit.setText("3.4.5")
+
+    assert "VERSION 3.4.5" in dialog.summary_label.text()
+
+
+def test_dialog_bin_invalid_version_blocks_start(qtbot, tmp_path) -> None:
+    dialog = OtaDialog()
+    qtbot.addWidget(dialog)
+    dialog.set_node("wifi-1")
+    path, _image = _write_bin(tmp_path, name="app-1.0.0.bin")
+    dialog.load_package_summary(str(path))
+    requests: list[tuple] = []
+    dialog.upload_requested.connect(lambda node, pkg: requests.append((node, pkg)))
+
+    dialog.version_edit.setText("999.0.0")  # major exceeds 8 bits
+    dialog._start()
+
+    assert requests == []
+    assert "打包失败" in dialog.status_label.text()
+    assert dialog.start_button.isEnabled() is True  # still armed to retry
+
+
+def test_dialog_rejects_undersized_bin(qtbot, tmp_path) -> None:
+    dialog = OtaDialog()
+    qtbot.addWidget(dialog)
+    dialog.set_node("wifi-1")
+    path = tmp_path / "tiny.bin"
+    path.write_bytes(b"\x01\x02\x03\x04")
+
+    assert dialog.load_package_summary(str(path)) is False
+    assert "超出范围" in dialog.summary_label.text()
     assert dialog.start_button.isEnabled() is False
 
 

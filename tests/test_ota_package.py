@@ -14,13 +14,17 @@ from sensor_host.ota.package import (
     STATE_READY,
     TARGET_ID,
     OtaPackageError,
+    build_package,
     format_crc,
     format_version,
+    is_package_image,
+    load_image_or_package,
     load_package,
     pack_manifest,
     pack_ota,
     parse_manifest,
     validate_package,
+    version_from_text,
 )
 
 
@@ -138,3 +142,58 @@ def test_parse_manifest_rejects_bad_magic_and_crc() -> None:
     bad_crc[MANIFEST_CRC_OFFSET] ^= 0xFF
     with pytest.raises(OtaPackageError, match="CRC"):
         parse_manifest(bytes(bad_crc))
+
+
+def test_build_package_from_image_matches_pack_ota() -> None:
+    image = _image(2048)
+    package = build_package(image, app_version="2.5.9")
+
+    assert package.data == pack_ota(image=image, app_version="2.5.9")
+    assert package.version_text == "2.5.9"
+    assert package.image == image
+    assert package.image_crc32 == zlib.crc32(image) & 0xFFFFFFFF
+    assert len(package.data) == MANIFEST_BLOCK_SIZE + len(image)
+    # The auto-built package passes the same self-check as a firmware-built one.
+    validate_package(package.data)
+
+
+def test_build_package_rejects_out_of_range_version() -> None:
+    with pytest.raises(OtaPackageError):
+        build_package(_image(), app_version="999.0.0")  # major exceeds 8 bits
+
+
+def test_build_package_rejects_oversized_image() -> None:
+    with pytest.raises(OtaPackageError):
+        build_package(b"\x00" * (0x50000 + 1), app_version="1.0.0")
+
+
+def test_version_from_text_extracts_semver_token() -> None:
+    assert version_from_text("app-1.2.3.bin") == "1.2.3"
+    assert version_from_text("firmware.bin") is None
+    assert version_from_text("v0.10.65535-release") == "0.10.65535"
+    assert version_from_text("") is None
+
+
+def test_is_package_image_detects_manifest_prefix() -> None:
+    package = pack_ota(image=_image(), app_version="1.0.0")
+    assert is_package_image(package) is True
+    assert is_package_image(_image()) is False
+    assert is_package_image(b"OTA1") is False  # shorter than a manifest block
+
+
+def test_load_image_or_package_accepts_ota_and_rejects_raw_bin(tmp_path) -> None:
+    image = _image(1024)
+    ota_path = tmp_path / "app.ota"
+    ota_path.write_bytes(pack_ota(image=image, app_version="1.0.0"))
+    loaded = load_image_or_package(ota_path)
+    assert loaded.version_text == "1.0.0"
+
+    bin_path = tmp_path / "app.bin"
+    bin_path.write_bytes(image)
+    with pytest.raises(OtaPackageError, match="raw image"):
+        load_image_or_package(bin_path)
+
+    # A .ota-named file that is really a package still loads regardless of name.
+    renamed = tmp_path / "pkg.bin"
+    renamed.write_bytes(pack_ota(image=image, app_version="3.1.4"))
+    assert load_image_or_package(renamed).version_text == "3.1.4"
