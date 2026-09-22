@@ -107,6 +107,44 @@ def dark_stylesheet() -> str:
         color: {COLORS['muted']};
         font-size: 11px;
     }}
+    QLabel[role="app-title"] {{
+        color: {COLORS['text']};
+        font-size: 15px;
+        font-weight: 700;
+        letter-spacing: 1px;
+    }}
+    QLabel[role="app-subtitle"] {{
+        color: {COLORS['muted']};
+        font-size: 11px;
+    }}
+    QFrame[role="brand-tile"] {{
+        background: #123D42;
+        border: 1px solid {COLORS['border']};
+        border-radius: 8px;
+    }}
+    QWidget[role="transparent"] {{ background: transparent; }}
+    QFrame[role="summary-chip"] {{
+        background: {COLORS['panel_alt']};
+        border: 1px solid {COLORS['border']};
+        border-radius: 6px;
+    }}
+    QLabel[role="summary-chip-label"] {{
+        color: {COLORS['muted']};
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 1px;
+    }}
+    QLabel[role="summary-chip-value"] {{
+        color: {COLORS['text']};
+        font-family: "Consolas";
+        font-size: 13px;
+        font-weight: 700;
+    }}
+    QFrame[role="workspace-card"] {{
+        background: {COLORS['background']};
+        border: 1px solid {COLORS['border']};
+        border-radius: 8px;
+    }}
     QLabel[state="online"] {{ color: {COLORS['cyan']}; }}
     QLabel[state="offline"] {{ color: {COLORS['muted']}; }}
     QPushButton {{
@@ -206,6 +244,7 @@ def dark_stylesheet() -> str:
     QScrollArea > QWidget {{ background: transparent; }}
     QScrollArea > QWidget > QWidget {{ background: transparent; }}
     QTabWidget::pane {{ border: 0; }}
+    QTabBar {{ background: transparent; }}
     QTabBar::tab {{
         color: {COLORS['muted']};
         padding: {SPACE.compact}px 18px;

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import QSettings, QSignalBlocker, QTimer, Qt, pyqtSignal
-from PyQt6.QtGui import QCloseEvent, QIcon, QShowEvent
+from PyQt6.QtGui import QCloseEvent, QIcon, QResizeEvent, QShowEvent
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -59,6 +59,10 @@ _CARD_TITLE_ACCENT_WIDTH = 3
 _CARD_TITLE_ACCENT_HEIGHT = 20
 _COMBO_MINIMUM_WIDTH = 72
 _TAB_BAR_HEIGHT = 38
+_HEADER_SUMMARY_MIN_WIDTH = 1220
+_BRAND_TILE_SIZE = 40
+_BRAND_ICON_SIZE = 24
+_APPLICATION_TAGLINE = "Real-time acquisition and diagnostics"
 _LIVESTREAM_SYNC_GRACE_MS = 500
 _ERROR_HEALTH_KEYS = (
     "crc_errors",
@@ -128,6 +132,21 @@ def _toolbar_divider() -> QFrame:
     return divider
 
 
+def _summary_chip(title: str, value_label: QLabel) -> QFrame:
+    """Build one compact two-line status chip for the header summary."""
+    chip = QFrame()
+    chip.setProperty("role", "summary-chip")
+    layout = QVBoxLayout(chip)
+    layout.setContentsMargins(SPACE.normal, SPACE.tight, SPACE.normal, SPACE.tight)
+    layout.setSpacing(2)
+    label = QLabel(title)
+    label.setProperty("role", "summary-chip-label")
+    value_label.setProperty("role", "summary-chip-value")
+    layout.addWidget(label)
+    layout.addWidget(value_label)
+    return chip
+
+
 class MainWindow(QMainWindow):
     """Expose connection controls and dashboard containers to the app controller."""
 
@@ -185,6 +204,17 @@ class MainWindow(QMainWindow):
         self.archive_view = ArchiveView()
         self.archive_tab = self._wrap_tab(self.archive_view)
         self.tabs.addTab(self.archive_tab, "SD ARCHIVE")
+        self.workspace_card = QFrame()
+        self.workspace_card.setProperty("role", "workspace-card")
+        workspace_layout = QVBoxLayout(self.workspace_card)
+        workspace_layout.setContentsMargins(
+            SPACE.normal,
+            0,
+            SPACE.normal,
+            SPACE.normal,
+        )
+        workspace_layout.setSpacing(0)
+        workspace_layout.addWidget(self.tabs)
         self.wifi_panel = WifiConnectionPanel()
         self.node_sidebar = NodeSidebar()
         self.wifi_panel.setMinimumHeight(_LEFT_WIFI_MINIMUM_HEIGHT)
@@ -197,7 +227,7 @@ class MainWindow(QMainWindow):
         self.left_splitter.setSizes(list(_LEFT_SPLIT_SIZES))
         self.workspace_splitter = CapsuleSplitter()
         self.workspace_splitter.addWidget(self.left_splitter)
-        self.workspace_splitter.addWidget(self.tabs)
+        self.workspace_splitter.addWidget(self.workspace_card)
         self.workspace_splitter.setStretchFactor(0, 1)
         self.workspace_splitter.setStretchFactor(1, 5)
         self.workspace_splitter.setSizes(list(_WORKSPACE_SPLIT_SIZES))
@@ -212,6 +242,9 @@ class MainWindow(QMainWindow):
         self.live_target_combo.currentTextChanged.connect(
             self._emit_livestream_requested
         )
+        self.live_target_combo.currentTextChanged.connect(
+            self.summary_target_label.setText
+        )
         self.watermark_combo.currentIndexChanged.connect(
             self._emit_watermark_requested
         )
@@ -224,6 +257,7 @@ class MainWindow(QMainWindow):
         self.set_connected(False)
         self._define_tab_order()
         self._restore_layout()
+        self._sync_header_summary_visibility()
 
     def set_connected(self, is_connected: bool) -> None:
         """Apply one coherent connected or disconnected control state."""
@@ -254,6 +288,14 @@ class MainWindow(QMainWindow):
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
         apply_windows_title_bar(self)
+
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - Qt API name
+        super().resizeEvent(event)
+        self._sync_header_summary_visibility()
+
+    def _sync_header_summary_visibility(self) -> None:
+        """Hide the header status chips before they can crowd the controls."""
+        self.header_summary.setVisible(self.width() >= _HEADER_SUMMARY_MIN_WIDTH)
 
     def _clear_canvas(self) -> None:
         """Discard cached plot history even while the display is frozen."""
@@ -459,6 +501,7 @@ class MainWindow(QMainWindow):
         empty = empty_snapshot()
         self.orientation_view.update_snapshot(empty)
         self.attitude_view.update_snapshot(empty)
+        self.summary_rate_label.setText("—")
         for key, _title, initial_value in _HEALTH_FIELDS:
             label = self.health_value_labels[key]
             label.setText(initial_value)
@@ -467,6 +510,11 @@ class MainWindow(QMainWindow):
     def update_snapshot(self, snapshot: UiSnapshot) -> None:
         """Refresh only the visible page, caching the snapshot for tab returns."""
         self._latest_snapshot = snapshot
+        self.summary_rate_label.setText(
+            f"{snapshot.sample_rate_hz:,.0f} sps"
+            if snapshot.sample_rate_hz > 0
+            else "—"
+        )
         control_state = snapshot.firmware_control_state
         reported_livestream_target = (
             None if control_state is None else control_state.livestream_target
@@ -538,38 +586,88 @@ class MainWindow(QMainWindow):
 
     def _create_header(self) -> QFrame:
         header = QFrame()
+        header.setProperty("card", True)
         layout = QHBoxLayout(header)
-        layout.setContentsMargins(0, SPACE.tight, 0, SPACE.tight)
-        layout.setSpacing(SPACE.compact)
+        layout.setContentsMargins(
+            SPACE.section,
+            SPACE.compact,
+            SPACE.section,
+            SPACE.compact,
+        )
+        layout.setSpacing(SPACE.normal)
         layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        tile = QFrame()
+        tile.setProperty("role", "brand-tile")
+        tile.setFixedSize(_BRAND_TILE_SIZE, _BRAND_TILE_SIZE)
+        tile_layout = QVBoxLayout(tile)
+        tile_layout.setContentsMargins(0, 0, 0, 0)
+        tile_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon = QLabel()
+        icon.setPixmap(
+            QIcon(str(APPLICATION_ICON_PATH)).pixmap(
+                _BRAND_ICON_SIZE, _BRAND_ICON_SIZE
+            )
+        )
+        tile_layout.addWidget(icon)
+        layout.addWidget(tile, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        brand_widget = QWidget()
+        brand_widget.setProperty("role", "transparent")
+        brand_block = QVBoxLayout(brand_widget)
+        brand_block.setContentsMargins(0, 0, 0, 0)
+        brand_block.setSpacing(2)
         brand = QLabel(APPLICATION_BRAND)
-        brand.setProperty("role", "eyebrow")
-        layout.addWidget(brand)
+        brand.setProperty("role", "app-title")
+        subtitle = QLabel(_APPLICATION_TAGLINE)
+        subtitle.setProperty("role", "app-subtitle")
+        brand_block.addWidget(brand)
+        brand_block.addWidget(subtitle)
+        layout.addWidget(brand_widget, 0, Qt.AlignmentFlag.AlignVCenter)
+
         layout.addStretch(1)
+
+        self.header_summary = QWidget()
+        self.header_summary.setProperty("role", "transparent")
+        summary_layout = QHBoxLayout(self.header_summary)
+        summary_layout.setContentsMargins(0, 0, 0, 0)
+        summary_layout.setSpacing(SPACE.compact)
+        self.summary_rate_label = QLabel("—")
+        self.summary_target_label = QLabel("UART")
+        self.connection_badge = QLabel("DISCONNECTED")
+        self.connection_badge.setMinimumWidth(96)
+        summary_layout.addWidget(
+            _summary_chip("SAMPLE RATE", self.summary_rate_label)
+        )
+        summary_layout.addWidget(
+            _summary_chip("LIVE TARGET", self.summary_target_label)
+        )
+        summary_layout.addWidget(_summary_chip("CONNECTION", self.connection_badge))
+        summary_layout.addWidget(_toolbar_divider(), 0, Qt.AlignmentFlag.AlignVCenter)
+        layout.addWidget(self.header_summary, 0, Qt.AlignmentFlag.AlignVCenter)
+
         self.transport_mode_combo = IntegratedComboBox()
         self.transport_mode_combo.addItems(("CDC", "WI-FI"))
         self.transport_mode_combo.setAccessibleName("Transport mode")
-        layout.addWidget(self.transport_mode_combo)
+        layout.addWidget(self.transport_mode_combo, 0, Qt.AlignmentFlag.AlignVCenter)
         self.device_combo = IntegratedComboBox()
-        self.device_combo.setMinimumWidth(250)
+        self.device_combo.setMinimumWidth(200)
         self.device_combo.addItem("No CDC devices", "")
         self.device_combo.setAccessibleName("CDC device")
-        layout.addWidget(self.device_combo)
+        layout.addWidget(self.device_combo, 0, Qt.AlignmentFlag.AlignVCenter)
         self.connect_button = QPushButton("CONNECT")
         self.connect_button.setProperty("role", "primary")
         self.connect_button.setAccessibleName("Connect")
-        layout.addWidget(self.connect_button)
+        layout.addWidget(self.connect_button, 0, Qt.AlignmentFlag.AlignVCenter)
         self.refresh_button = QPushButton("REFRESH")
         self.refresh_button.clicked.connect(self.refresh_requested)
         self.refresh_button.setAccessibleName("Refresh devices")
-        layout.addWidget(self.refresh_button)
-        self.connection_badge = QLabel("DISCONNECTED")
-        self.connection_badge.setMinimumWidth(110)
-        layout.addWidget(self.connection_badge)
+        layout.addWidget(self.refresh_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        layout.addWidget(_toolbar_divider(), 0, Qt.AlignmentFlag.AlignVCenter)
         self.reset_layout_button = QPushButton("RESET LAYOUT")
         self.reset_layout_button.clicked.connect(self._reset_layout)
         self.reset_layout_button.setAccessibleName("Reset layout")
-        layout.addWidget(self.reset_layout_button)
+        layout.addWidget(self.reset_layout_button, 0, Qt.AlignmentFlag.AlignVCenter)
         return header
 
     def _create_acquisition_toolbar(self) -> QFrame:
@@ -764,7 +862,7 @@ class MainWindow(QMainWindow):
     def _wrap_tab(view: QWidget) -> QWidget:
         tab = QWidget()
         layout = QVBoxLayout(tab)
-        layout.setContentsMargins(0, SPACE.section, 0, 0)
+        layout.setContentsMargins(0, SPACE.compact, 0, 0)
         layout.setSpacing(SPACE.normal)
         layout.addWidget(view)
         return tab
