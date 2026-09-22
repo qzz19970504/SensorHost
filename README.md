@@ -30,21 +30,45 @@ Fake mode supplies deterministic live vibration/orientation data and a populated
 SD ring. Its deliberately slow export exercises progress, Cancel and CLEAR SD
 without opening a serial port or requiring firmware.
 
-## Test and package
+## Build the Windows EXE
+
+Double-click `build.bat` at the repository root, or run it from any shell:
+
+```bat
+build.bat                              :: default: venv + tests + PyInstaller + smoke test
+build.bat --skip-tests                 :: skip the pytest gate
+build.bat --clean                      :: recreate build\host-package\.venv from scratch
+build.bat --python C:\Python312\python.exe
+build.bat --no-pause                   :: do not pause at exit (CI / scripted use)
+build.bat --help
+```
+
+Requirements: Windows 10/11, Python 3.11+ (discovered via `py -3.12`, `python.exe` on
+PATH, or `--python`), and PowerShell 5.1+. The first build downloads PyInstaller
+6.16 and PyQt6 wheels; later builds reuse `build\host-package\.venv`.
+
+Output: `dist\host\VibrationSensorHost-<version>-win64.exe` plus a `.json` size and
+SHA-256 manifest. `build.bat` is a thin wrapper around `tools\package_host.ps1`,
+which reconciles dependencies without upgrading satisfied versions, runs the source
+tests, invokes PyInstaller via `STM32SensorHost.spec`, smoke-tests the packaged EXE
+and writes the manifest. Advanced users can call the PowerShell script directly:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\package_host.ps1
+```
+
+See [build environment](docs/HOST_BUILD_ENVIRONMENT.md) for details.
+
+## Test
+
+Standalone test commands for iterating without a full package cycle:
 
 ```powershell
 $env:QT_QPA_PLATFORM='offscreen'
 & .\.venv\Scripts\python.exe -m pytest tests -q
 & .\.venv\Scripts\python.exe -m compileall -q src tools
 git diff --check
-powershell -ExecutionPolicy Bypass -File .\tools\package_host.ps1
 ```
-
-The packager reuses its isolated build environment by default (pass `-CleanEnvironment`
-to recreate it), reconciles dependencies without upgrading satisfied versions, runs
-the source tests, and builds a one-file
-Windows EXE, runs its smoke test and writes a SHA-256 manifest under `dist/host/`.
-See [build environment](docs/HOST_BUILD_ENVIRONMENT.md).
 
 ## Connect and record
 
